@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Coastline</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #load{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    font:300 15px/1.5 "Segoe UI",system-ui,sans-serif;color:#cfe3e8;letter-spacing:.04em;background:#04090c;transition:opacity .5s}
+  #bar{width:260px;height:2px;background:#183038;margin-top:14px}
+  #fill{height:100%;width:0;background:#9fd8e0;transition:width .15s}
+  #hud{position:fixed;left:14px;bottom:12px;font:12px/1.5 Consolas,monospace;color:#fff;text-shadow:0 0 3px #000;white-space:pre;display:none;pointer-events:none}
+  #toast{position:fixed;left:50%;top:26px;transform:translateX(-50%);padding:7px 16px;border-radius:18px;background:rgba(0,0,0,.55);font:300 14px "Segoe UI",system-ui,sans-serif;color:#fff;opacity:0;transition:opacity .3s;pointer-events:none}
+  #beach{position:fixed;right:18px;top:18px;width:330px;padding:14px 16px;border-radius:10px;background:rgba(8,14,17,.86);color:#e4eef0;
+    font:14px/1.45 "Segoe UI",system-ui,sans-serif;display:flex;flex-direction:column;gap:9px}
+  #beach[hidden]{display:none}
+  #beach b{font-size:16px;font-weight:600}
+  #beach p{margin:0;font-size:12.5px;color:#9db0b6}
+  #beach button,#beach select,#beach input{background:#1b2428;color:inherit;border:1px solid #3a4c53;border-radius:5px;padding:4px 9px;font:inherit;font-size:13.5px;cursor:pointer}
+  #beach input{flex:1;cursor:text;min-width:0}
+  #beach button.on{background:#2d6470;border-color:#58a3b2}
+  #bpList,#bpRes{display:flex;flex-wrap:wrap;gap:5px}
+  #bpRes{font-size:13px;color:#9db0b6}
+  #bpForm{display:flex;gap:6px}
+  #bpNow{font-size:13px;color:#b9d3d8}
+  #hint{position:fixed;right:16px;bottom:12px;font:300 12px "Segoe UI",system-ui,sans-serif;color:#fff;opacity:0;text-shadow:0 0 4px #000;transition:opacity 1s;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="load"><div id="msg">Preparing the coastline</div><div id="bar"><div id="fill"></div></div></div>
+<div id="hud"></div>
+<div id="toast"></div>
+<div id="hint">F fullscreen &nbsp;·&nbsp; Space pause &nbsp;·&nbsp; ← → scenes &nbsp;·&nbsp; L favourite &nbsp;·&nbsp; P play favourites &nbsp;·&nbsp; S sound &nbsp;·&nbsp; C calm &nbsp;·&nbsp; B beach &nbsp;·&nbsp; G fly &nbsp;·&nbsp; H stats</div>
+
+<script src="js/gl.js"></script>
+<script src="js/shaders/common.js"></script>
+<script src="js/shaders/textures.js"></script>
+<script src="js/shaders/ocean.js"></script>
+<script src="js/shaders/sky.js"></script>
+<script src="js/shaders/terrain.js"></script>
+<script src="js/shaders/sim.js"></script>
+<script src="js/shaders/view.js"></script>
+<script src="js/shaders/post.js"></script>
+<script src="js/shaders/trees.js"></script>
+<script src="js/shaders/spray.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/live.js"></script>
+<script src="js/beach.js"></script>
+<script src="js/scenes.js"></script>
+<script src="js/realcoast.js"></script>
+<script src="js/world.js"></script>
+<script src="js/plants.js"></script>
+<script src="js/targets.js"></script>
+<script src="js/camera.js"></script>
+<script src="js/frame.js"></script>
+<script src="js/fly.js"></script>
+<script src="js/render.js"></script>
+<script src="js/wallpaper.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
