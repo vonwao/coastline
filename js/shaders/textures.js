@@ -12,6 +12,25 @@ void main(){
   float d=pf(vUV+.73,64.,3);
   o=vec4(a,b,c,d);
 }`;
+/* ------ 3D noise for the clouds (js/shaders/sky.js), one slice per draw, tiling in all three directions.
+   R: Perlin-Worley, the clouds' shapes (smooth noise pulled toward round cells). G, B, A: Worley noise at
+   three sizes, high in the middle of each cell, for the bulges on a cloud's surface. */
+const FS_NOISE3=HEAD+`
+in vec2 vUV; out vec4 o; uniform float uZ;
+vec3 h33(vec3 p,float per){ p=mod(p,per); p=vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6))); return fract(sin(p)*43758.5453); }
+float gn(vec3 x,float per){ vec3 i=floor(x),f=fract(x),u=f*f*f*(f*(f*6.-15.)+10.);
+  #define G(o) dot(h33(i+o,per)*2.-1.,f-o)
+  return mix(mix(mix(G(vec3(0,0,0)),G(vec3(1,0,0)),u.x),mix(G(vec3(0,1,0)),G(vec3(1,1,0)),u.x),u.y),
+             mix(mix(G(vec3(0,0,1)),G(vec3(1,0,1)),u.x),mix(G(vec3(0,1,1)),G(vec3(1,1,1)),u.x),u.y),u.z); }
+float pf(vec3 p,float fr){ float a=.5,s=0.,n=0.; for(int i=0;i<4;i++){ s+=a*gn(p*fr,fr); n+=a; a*=.5; fr*=2.; } return clamp(s/n*1.1+.5,0.,1.); }
+float wo(vec3 x,float per){ vec3 i=floor(x),f=fract(x); float d=9.;
+  for(int z=-1;z<=1;z++)for(int y=-1;y<=1;y++)for(int k=-1;k<=1;k++){ vec3 g=vec3(k,y,z),r=g+h33(i+g,per)-f; d=min(d,dot(r,r)); }
+  return 1.-min(sqrt(d),1.); }
+float wf(vec3 p,float fr){ return wo(p*fr,fr)*.625+wo(p*fr*2.,fr*2.)*.25+wo(p*fr*4.,fr*4.)*.125; }
+void main(){
+  vec3 p=vec3(vUV,uZ);
+  o=vec4(mix(pf(p,4.),wf(p,4.),.5),wf(p,6.),wf(p,12.),wf(p,24.));
+}`;
 const FS_LACE=HEAD+`
 in vec2 vUV; out vec4 o;
 vec2 h2(vec2 p,float per){ p=mod(p,per); vec3 p3=fract(vec3(p.xyx)*vec3(.1031,.1030,.0973)); p3+=dot(p3,p3.yzx+33.33); return fract((p3.xx+p3.yz)*p3.zy); }

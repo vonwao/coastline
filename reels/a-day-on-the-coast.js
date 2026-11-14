@@ -1,0 +1,38 @@
+/* A Day on the Coast: one day from first light to moonrise, across nine coasts. About 28 minutes.
+   The day is 29 June 2026, a full moon, so the moon rises over the sea soon after dark.
+   The format is in REELS.md. */
+REEL({
+  id: 'a-day-on-the-coast',
+  title: 'A Day on the Coast',
+  subtitle: 'From first light to moonrise',
+  seed: 1,
+  date: '2026-06-29',
+  movies: [
+    { title: 'First Light', coast: 'Sea cliffs', length: 180, time: ['sunrise-40', 'sunrise-10'], weather: 'fair',
+      camera: { kinds: { angled: 3, canopy: 1 }, open: 'wide', pace: 'slow' },
+      sound: { surf: 0.9, wind: 0.5, birds: 0.3, music: { style: 'dawn', level: 0.3 } } },
+    { title: 'Sunrise', coast: 'Crescent bay', length: 180, time: ['sunrise-5', 'sunrise+25'], weather: 'fair',
+      camera: { kinds: { angled: 3, top: 1 }, open: 'reveal' },
+      sound: { birds: 0.4, music: { style: 'dawn', level: 0.3 } } },
+    { title: 'Morning Swell', coast: 'Surf beach', length: 170, time: ['08:00', '08:40'], weather: 'clear',
+      camera: { kinds: { angled: 3, top: 2 } },
+      sound: { birds: 0.25 } },
+    { title: 'The Lagoon', coast: 'Tropical lagoon', length: 180, time: ['10:30', '11:10'], weather: 'clear',
+      camera: { kinds: { top: 3, angled: 2, canopy: 1 }, pace: 'slow' },
+      sound: { surf: 0.8, music: { style: 'day', level: 0.25 } } },
+    { title: 'Noon on the Reef', coast: 'Surge reef', length: 160, time: ['12:20', '12:50'], weather: 'fair', waves: 'big',
+      camera: { kinds: { angled: 3, top: 1 }, open: 'wide' } },
+    { title: 'Afternoon Wind', coast: 'Long sand coast', length: 170, time: ['15:30', '16:10'], weather: 'cloudy',
+      camera: { kinds: { angled: 2, top: 1 } },
+      sound: { wind: 1.4 } },
+    { title: 'Golden Hour', coast: 'Broken coast', length: 200, time: ['sunset-70', 'sunset-30'], weather: 'fair',
+      camera: { kinds: { angled: 4, canopy: 1 }, pace: 'slow' },
+      sound: { music: { style: 'dusk', level: 0.3 } } },
+    { title: 'Sunset', coast: 'Palm cove', length: 200, time: ['sunset-25', 'sunset+10'], weather: 'fair',
+      camera: { kinds: ['angled'], pace: 'slow', close: 'rise' },
+      sound: { surf: 0.8, music: { style: 'dusk', level: 0.35 } } },
+    { title: 'Moonrise', coast: 'Rock shelf', length: 220, time: ['21:10', '21:50'], weather: 'clear',
+      camera: { kinds: ['angled'], pace: 'slow' },
+      sound: { surf: 0.8, insects: 0.4, music: { style: 'night', level: 0.3 } } },
+  ],
+});

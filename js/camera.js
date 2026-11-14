@@ -19,24 +19,103 @@ function rateShot(S,u=.5){
   }
   return {inland:inland/n,shore:shore/n,water:water/n};
 }
-function makeShot(L,lightKey,kind){
+/* What the camera really sees, ray by ray: a coarser cousin of the view shader's ray march, on the coast's
+   height grid (groundAt). rateShot above only asks where each ray would meet sea level, which is right
+   for the slideshow's own paths: they're built to stand clear of the land. A path written as numbers (a
+   recipe, or the studio) can put a cliff right beside the drone, and rateShot looks straight through it.
+   Here each ray stops at the first ground it meets. Ground within 60 m that rises to the upper half of
+   the drone's height above the ground below it, or anything within 6 m, is "wall": rock or land standing
+   close in the picture instead of lying under it. A cliff further off is scenery, and may be the subject.
+   The rest is sorted as rateShot sorts it: water, shore and inland. */
+function viewRate(S,u=.5){
+  const L=S.L,asp=canvas.width/canvas.height,c=cameraFor(S,u,0,asp);
+  const g0=Math.max(groundAt(L,c.ro[0],c.ro[2]),0), wallH=c.ro[1]-.5*(c.ro[1]-g0);
+  const x0=L.domMin[0],z0=L.domMin[1],x1=x0+L.domSize[0],z1=z0+L.domSize[1];
+  let wall=0,inland=0,shore=0,water=0,n=0;
+  for(let j=0;j<11;j++)for(let i=0;i<15;i++){
+    const nx=(i+.5)/15*2-1,ny=(j+.5)/11*2-1;
+    const rd=vnorm([c.F[0]+c.R[0]*nx*c.tan*asp+c.Up[0]*ny*c.tan,c.F[1]+c.R[1]*nx*c.tan*asp+c.Up[1]*ny*c.tan,c.F[2]+c.R[2]*nx*c.tan*asp+c.Up[2]*ny*c.tan]);
+    n++;
+    const tSea=rd[1]<-.004?-c.ro[1]/rd[1]:1e9, tMax=Math.min(tSea,700);
+    let t=0,hit=null;
+    while(t<tMax){
+      t=Math.min(t+Math.max(1.5,t*.03),tMax);
+      const x=c.ro[0]+rd[0]*t,z=c.ro[2]+rd[2]*t;
+      if(x<x0||x>x1||z<z0||z>z1) break;
+      const g=groundAt(L,x,z);
+      if(g>c.ro[1]+rd[1]*t){ hit=[x,g,z]; break; }
+    }
+    if(hit){
+      if((hit[1]>wallH&&t<60)||t<6) wall++;
+      else if(inlandAt(L,hit[0],hit[2])>.4) inland++;
+      else shore++;
+      continue;
+    }
+    if(tSea>=1e9) continue;
+    const x=c.ro[0]+rd[0]*tSea,z=c.ro[2]+rd[2]*tSea, G=groundAt(L,x,z);
+    if(inlandAt(L,x,z)>.4||x<x0) inland++;
+    else if(G>-1.6) shore++;
+    else water++;
+  }
+  return {wall:wall/n,inland:inland/n,shore:shore/n,water:water/n};
+}
+/* ---- Glare guard ----
+   With the sun up but low, a camera looking toward it sees the sun's path on the water as a blaze of
+   white, and the rest of the picture goes dark around it. Now and then that's beautiful; often, it's
+   tiring. The first 10-minute calm film had it in most of its shots, and the slideshow faced a low sun in
+   about half the shots that had one. So about one shot in eight under a low sun faces it (SUN_SHARE),
+   chosen to; the rest are turned to have it beside or behind the camera.
+   Facing it means the sun, or its reflection in level water (the middle of its path of glitter), is in
+   the picture or just outside it. Only the camera's direction matters, since the sun is so far away.
+   These never count: twilight (the sun's disc has set, and the glow is what's wanted), night (the moon's
+   path is part of the night's look), cloud that hides the sun, and straight-down shots, which can't see a
+   low sun's path. GLARE_EL: up to this height the path is a blaze; higher, it's a sparkle. */
+const GLARE_EL=25, SUN_SHARE=1/8;
+function lowSun(key){ const Li=LIGHTS[key]; return !!Li&&!!Li.sun&&Li.el>=-1&&Li.el<GLARE_EL&&(Li.night||0)<=.3&&(Li.sunVis??1)>=.4; }
+/* Whether a candidate is the wrong way round: facing a low sun when it shouldn't, or, for the one shot in
+   eight that should (sunOk), not facing it. */
+function sunWrong(S,sunOk,us){ return S.kind!=='top'&&lowSun(S.lightKey)&&facesSun(S,us)!==sunOk; }
+function facesSun(S,us=[.5]){
+  if(S.kind==='top'||!lowSun(S.lightKey)) return false;
+  const Li=LIGHTS[S.lightKey], asp=canvas.width/canvas.height, dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  for(const u of us){
+    const c=cameraFor(S,u,0,asp);
+    for(const d of [[Li.sun[0],-Li.sun[1],Li.sun[2]],Li.sun]){
+      const z=dot(d,c.F); if(z<.05) continue;
+      const x=dot(d,c.R)/(z*c.tan*asp), y=dot(d,c.Up)/(z*c.tan);
+      if(Math.abs(x)<1.15&&Math.abs(y)<1.3) return true;
+    }
+  }
+  return false;
+}
+/* sunOk: whether this shot is the one in eight that faces a low sun. Left out, it's decided here.
+   w: passed to buildShot (a wide straight-down shot for reels); left out, the slideshow's own. */
+function makeShot(L,lightKey,kind,sunOk,w){
   kind=kind||(Math.random()<.46?'top':'angled');
-  if(!lightKey){ const opts=kind==='top'?L.lights.filter(k=>k!=='golden'):L.lights; lightKey=pick(opts); }
-  if(kind==='low') return buildLow(L,lightKey);
-  if(kind==='canopy') return buildCanopy(L,lightKey);
+  if(!lightKey) lightKey=pickLight(L,kind);
+  if(sunOk===undefined) sunOk=Math.random()<SUN_SHARE;
+  /* A coast with no plants near the shore has no tree line to cross: a canopy glide instead. */
+  if(kind==='crossing'){ const S=makeCrossing(L,lightKey,sunOk); if(S) return S; kind='canopy'; }
+  if(kind==='low'||kind==='canopy'){
+    /* One path at a time; a few tries for one the right way round. */
+    let S;
+    for(let i=0;i<8;i++){ S=kind==='low'?buildLow(L,lightKey):buildCanopy(L,lightKey); if(!sunWrong(S,sunOk,[0,.5,1])&&peopleClear(S)) break; }
+    return S;
+  }
   let best=null,bestScore=-1e9;
   for(let i=0;i<48;i++){
-    const S=buildShot(L,lightKey,kind),r=rateShot(S);
-    const lim=kind==='top'?.16:.13;
-    const score=-Math.max(r.inland-lim,0)*6+Math.min(r.shore,.12)*5+Math.min(r.water,.3);
+    const S=buildShot(L,lightKey,kind,w),r=rateShot(S);
+    const lim=kind==='top'?.16:.13, wrong=sunWrong(S,sunOk)||(kind!=='top'&&!peopleClear(S));
+    const score=-Math.max(r.inland-lim,0)*6+Math.min(r.shore,.12)*5+Math.min(r.water,.3)-(wrong?10:0);
     if(score>bestScore){bestScore=score;best=S;}
-    if(r.inland<=lim&&r.shore>=.05&&r.water>=.2) return S;
+    if(!wrong&&r.inland<=lim&&r.shore>=.05&&r.water>=.2) return S;
   }
   return best;
 }
-/* Where the plants begin, searching from inland toward the sea. */
+/* Where the plants begin, searching from inland toward the sea. A path through the plants to the beach
+   (beachPath in js/shaders/terrain.js) is only a few metres wide, so the plants either side of it count. */
 function plantEdge(L,z){
-  for(let x=L.domMin[0]+6;x<L.domMin[0]+L.domSize[0];x+=2){ if(inlandAt(L,x,z)<.25) return x; }
+  for(let x=L.domMin[0]+6;x<L.domMin[0]+L.domSize[0];x+=2){ if(Math.max(inlandAt(L,x,z),inlandAt(L,x,z-5),inlandAt(L,x,z+5))<.25) return x; }
   return L.domMin[0]+20;
 }
 /* A fast pass close to the ground, along the edge of the plants. */
@@ -77,14 +156,181 @@ function buildCanopy(L,lightKey,o){
   S.dur=dur; S.start=0;
   return S;
 }
-function buildShot(L,lightKey,kind){
+/* ---- Crossing the tree line (PLAN.md L1) ----
+   A slow flight from over the trees inland, across the edge of the plants and the beach, and out over the
+   shallows ("in"); or the reverse, backing in from the sea over the beach and up over the trees, still facing
+   the sea ("back"); or along
+   the edge of the plants, with the trees on one side and the sand on the other ("edge").
+   Its height isn't a straight line from p0 to p1. S.prof holds the height at CROSS_N+1 points along the
+   path, worked out from the real plants under it (plantList, the same list the full 3D models use) and
+   the ground: the drone flies clr metres above the crowns, dips after the tree line to low metres over
+   the sand, and climbs or descends no steeper than CROSS_SLOPE, smoothed. It never comes within 4 m of a
+   crown. S.cross keeps the numbers the profile is made from, so a recipe or a favourite flies the same
+   path again: {v: variant ('in', 'back' or 'edge'), clr, low, rise (metres it climbs over the last third, out
+   over the surf)}. */
+const CROSS_N=64, CROSS_SLOPE=.32;
+/* The tops of the plants near the path, as [x, z, top height, crown radius]. */
+function crossTops(S){
+  /* The plants of the shot's own vegetation preset; if it isn't baked yet, the profile is made again once
+     it is (vegRefresh in js/vegetation.js). */
+  if(typeof vegUse==='function'){ S.vegMade=vegUse(S)?vegOf(S):null; if(!S.vegMade) S.meshes=undefined; }
+  if(!S.meshes) plantList(S,true);
+  const out=[]; if(!S.meshes||!plantInfo) return out;
+  for(let m=0;m<PLANT.COUNT;m++){
+    const A=S.meshes[m], rad=plantInfo[m*2], cy=plantInfo[m*2+1];
+    for(let i=0;i<A.length;i+=8){ const s=(A[i+3]-m)/.4; out.push([A[i],A[i+2],A[i+1]+s*(cy+rad*.92),s*rad*.8]); }
+  }
+  if(Q.has('nomesh')) S.meshes=null;
+  return out;
+}
+function crossProfile(S){
+  const L=S.L,c=S.cross,N=CROSS_N,tops=crossTops(S);
+  const len=Math.hypot(S.p1[0]-S.p0[0],S.p1[2]-S.p0[2]), ds=len/N;
+  /* Bin the plants on a 6 m grid, so each point checks only those near it. */
+  const B=new Map(), key=(i,j)=>i*100003+j;
+  for(const t of tops){ const k=key(Math.floor(t[0]/6),Math.floor(t[1]/6)); if(!B.has(k)) B.set(k,[]); B.get(k).push(t); }
+  const yMin=new Float32Array(N+1), y=new Float32Array(N+1);
+  for(let i=0;i<=N;i++){
+    const k=i/N, x=S.p0[0]+(S.p1[0]-S.p0[0])*k, z=S.p0[2]+(S.p1[2]-S.p0[2])*k;
+    const g=Math.max(groundAt(L,x,z),.8);
+    let can=g;
+    const bi=Math.floor(x/6), bj=Math.floor(z/6);
+    for(let a=-3;a<=3;a++)for(let b=-3;b<=3;b++){ const A=B.get(key(bi+a,bj+b)); if(!A) continue;
+      for(const t of A){ const d=Math.hypot(t[0]-x,t[1]-z); if(d<t[3]+2.5) can=Math.max(can,t[2]); } }
+    yMin[i]=Math.max(g+4.5,can+4);
+    /* Over trees, clr above their crowns; over sand, shrubs or water, low above the ground. */
+    y[i]=(can>g+3?can+c.clr:g+c.low)+(c.rise||0)*smoothstep(.62,1,k);
+  }
+  /* No dips between trees: the highest need within 8 m either side. */
+  const w=Math.max(1,Math.round(8/Math.max(ds,.1))), y2=new Float32Array(N+1);
+  for(let i=0;i<=N;i++){ let m=y[i]; for(let j=Math.max(0,i-w);j<=Math.min(N,i+w);j++) m=Math.max(m,y[j]); y2[i]=m; }
+  /* Climb and descend gently: never steeper than CROSS_SLOPE, raising the path where it would be. */
+  for(let i=1;i<=N;i++) y2[i]=Math.max(y2[i],y2[i-1]-CROSS_SLOPE*ds);
+  for(let i=N-1;i>=0;i--) y2[i]=Math.max(y2[i],y2[i+1]-CROSS_SLOPE*ds);
+  /* Round off the corners, and stay clear of every crown. */
+  for(let pass=0;pass<6;pass++){
+    const t=y2.slice();
+    for(let i=0;i<=N;i++){ const a=t[Math.max(0,i-1)],b=t[Math.min(N,i+1)]; y2[i]=Math.max((a+2*t[i]+b)*.25,yMin[i]); }
+  }
+  S.prof=y2; S.p0[1]=y2[0]; S.p1[1]=y2[N];
+  S.maxH=L.maxH; S.steps=L.kind==='rocky'?40:38;
+  S.nearH=Math.max(...[S.p0,S.p1].map(p=>maxGroundNear(L,p[0],p[2],380)+14),...Array.from(y2).map(v=>v+10));
+}
+function smoothstep(a,b,x){ const t=Math.min(Math.max((x-a)/(b-a),0),1); return t*t*(3-2*t); }
+/* Places worth crossing: plants within reach of the shore, a beach between, and some variety in the edge
+   of the plants (a bend, a gap, a tongue of scrub). Returns the best of a few tries. */
+function crossPlace(L){
+  let best=null,bs=-1e9;
+  for(let i=0;i<14;i++){
+    const z=rnd(-L.domSize[1]*.3,L.domSize[1]*.3), pe=plantEdge(L,z), sh=shoreAt(L,z), wid=sh-pe;
+    if(wid<4||wid>170||inlandAt(L,pe-18,z)<.3) continue;
+    const pes=[-50,-25,25,50].map(d=>plantEdge(L,z+d)-pe), shs=[-50,50].map(d=>shoreAt(L,z+d)-sh);
+    const irr=pes.reduce((s,v)=>s+Math.abs(v),0)/4+Math.abs(shs[0]+shs[1])*.5;
+    const sc=Math.min(wid,80)/80*.6+Math.min(irr/14,1)+rnd(.7);
+    if(sc>bs){ bs=sc; best={z,pe,sh,wid}; }
+  }
+  return best;
+}
+/* o: calm (long and slow), pace, dur, v (a variant to try first). */
+function buildCrossing(L,lightKey,o={}){
+  const P=crossPlace(L); if(!P) return null;
+  const v=o.v||pick(['in','in','in','back','back','edge','edge']);
+  const S={L,lightKey,kind:'crossing',noise:rnd(1000)};
+  const calm=!!o.calm, pace=o.pace||1;
+  let dur=calm?(o.dur||rnd(32,55)):rnd(6.5,9.5);
+  /* Over the trees it may go nearly to the inland edge of the simulated ground. */
+  const xLo=L.domMin[0]+Math.max(12,L.domSize[0]*.025), xHi=L.domMin[0]+L.domSize[0]*.96;
+  S.cross={v,clr:r2c(rnd(8,15)),low:r2c(rnd(6,14)),rise:0};
+  if(v==='edge'){
+    /* Along the edge: just over the sand side of the plant line, heading along the coast and turned out
+       toward the sea a little, so the trees pass on one side and the beach opens on the other. */
+    const dir=Math.random()<.5?1:-1, speed=calm?rnd(1.4,2.6)*pace:rnd(3.5,6), len=speed*dur;
+    const z0=P.z-dir*len*.5, z1=P.z+dir*len*.5, off=rnd(-4,9);
+    const x0=Math.max(plantEdge(L,z0)+off,xLo), x1=Math.max(plantEdge(L,z1)+off,xLo);
+    S.p0=[x0,0,z0]; S.p1=[x1,0,z1];
+    const h=Math.atan2(z1-z0,x1-x0), turn=rnd(.25,.75)*(Math.random()<.8?1:-.6);
+    S.yaw0=h-dir*turn; S.yaw1=S.yaw0+dir*rnd(-.08,.08); S.pitch=-deg(rnd(14,26));
+  } else {
+    /* Across: through the edge of the plants on a slant, 15 to 40 degrees off straight out to sea, so the
+       beach runs across the picture rather than straight ahead. */
+    const sg=Math.random()<.5?1:-1, head=sg*rnd(.26,.7), dx=Math.cos(head), dz=Math.sin(head), back=v==='back';
+    /* Most of the time over the trees and the beach. A first version spent half its time over plain sea,
+       and only glimpsed the trees: now "in" ends just past the water's edge, and "back" starts over the
+       dry sand, with the surf already in view. */
+    const aMax=(P.pe-xLo-2)/dx;
+    let a=Math.min(calm?rnd(45,85):rnd(10,22),aMax), b=back?Math.max(P.wid,6)*rnd(.35,.75)/dx:Math.max(P.wid,6)/dx+(calm?rnd(0,6):rnd(2,8));
+    if(a<(calm?16:8)) return null;
+    if(!calm){ const len=rnd(3.8,6.5)*dur; b=Math.min(b,Math.max(len-a,P.wid*.4/dx)); }
+    else{
+      /* 1.3 to 4.2 m/s. A reel gives the length of the shot: then the path is fitted to it, longer over the
+         trees (then the sea) or shorter; otherwise the length is fitted to the path. */
+      const lo=1.3*pace, hi=4.2*pace;
+      if(o.dur){
+        if(a+b<lo*dur){ const more=lo*dur-(a+b), ma=Math.min(more,Math.max(aMax-a,0)); a+=ma; b+=more-ma; }
+        else if(a+b>hi*dur){ const cut=a+b-hi*dur, ca=Math.max(Math.min(cut,a-16),0); a-=ca; b=Math.max(b-(cut-ca),P.wid*.5/dx); }
+      } else dur=(a+b)/Math.min(Math.max((a+b)/dur,lo),hi);
+    }
+    const A=[P.pe-dx*a,0,P.z-dz*a], Bp=[P.pe+dx*b,0,P.z+dz*b];
+    if(A[0]<xLo-1||Bp[0]>xHi) return null;
+    if(v==='in'){
+      /* Looking a little further along the beach than it flies; steeply down on the crowns at first, with the
+         beach ahead, then tilting up as it crosses the sand, and sometimes climbing over the surf at the end. */
+      S.p0=A; S.p1=Bp; S.yaw0=head*1.3+rnd(-.08,.08); S.yaw1=S.yaw0+sg*rnd(0,.1);
+      if(calm){ S.pitch=-deg(rnd(36,46)); S.pitch1=-deg(rnd(18,25)); if(Math.random()<.4) S.cross.rise=r2c(rnd(8,18)); }
+      else S.pitch=-deg(rnd(26,34));
+    } else {
+      /* Back: facing the sea, backing in over the beach and rising over the trees, which come into the
+         picture from below as the drone passes over them; tilting up a little as it climbs and backs away, so the
+         beach stays in view (at a fixed tilt, the forest filled the picture by the end).
+         Facing the land showed a wall of forest, and cost twice the drawing time. */
+      S.p0=Bp; S.p1=A; S.yaw0=head*1.3+rnd(-.08,.08); S.yaw1=S.yaw0+sg*rnd(0,.1);
+      S.pitch=-deg(rnd(22,30)); if(calm) S.pitch1=S.pitch+deg(rnd(4,8));
+    }
+  }
+  S.fov=deg(calm?60:62); S.dur=dur; S.start=0;
+  crossProfile(S);
+  return S;
+}
+const r2c=x=>Math.round(x*10)/10;
+/* A crossing is fine if the drone stays over the simulated stretch, nothing but plants stands close in the
+   picture (cliffs and hills are checked by viewRate; plants by the profile), and a flight out to sea
+   ends with water in view. */
+function crossOk(S){
+  const L=S.L;
+  for(const u of [0,.5,1]){
+    const c=cameraFor(S,u,0,1);
+    const fz=(c.ro[2]-L.domMin[1])/L.domSize[1], fx=(c.ro[0]-L.domMin[0])/L.domSize[0];
+    if(fz<.06||fz>.94||fx<.015||fx>.98) return false;
+    const d=c.F[1]<-.05?Math.min(-c.ro[1]/c.F[1],600):400, f=(c.ro[2]+c.F[2]*d-L.domMin[1])/L.domSize[1];
+    if(f<.08||f>.92) return false;
+    const r=viewRate(S,u); if(r.wall>.1) return false;
+    if(S.cross.v==='in'&&u===1&&r.water<.15) return false;
+  }
+  return peopleClear(S);
+}
+/* People on the beach (js/people.js) keep the camera at a distance; without them, any path is clear. */
+function peopleClear(S){ return typeof peopleNearPath!=='function'||!peopleNearPath(S); }
+function makeCrossing(L,lightKey,sunOk,o={}){
+  let best=null;
+  for(let i=0;i<10;i++){
+    const S=buildCrossing(L,lightKey,o); if(!S) continue;
+    if(!best) best=S;
+    if(!crossOk(S)) continue;
+    best=S;
+    if(!sunWrong(S,sunOk,[0,.5,1])) return S;
+  }
+  return best;
+}
+/* w.high, for reels' wide opening shots (makeMove): a straight-down shot near its highest. Left out,
+   nothing changes, down to the random numbers drawn. */
+function buildShot(L,lightKey,kind,w){
   const S={L,lightKey,kind,noise:rnd(1000)};
   const dom=L.domSize, dx0=L.domMin[0], z0=L.domMin[1], zSpan=dom[1];
   const aspect=canvas.width/canvas.height;
   if(kind==='top'){
     const altMax=Math.min(dom[0]*.46/Math.tan(FOV_TOP/2)/1.05,(L.dx<.7?122:260));
     const altMin=L.dx<.7?(L.kind==='surf'?62:50):120;
-    const alt=rnd(altMin,Math.max(altMin+1,altMax));
+    const alt=rnd(w&&w.high?Math.max(altMin,altMax*.85):altMin,Math.max(altMin+1,altMax));
     const hw=alt*Math.tan(FOV_TOP/2)*aspect;
     const zLim=zSpan*.5-hw*1.25-40;
     const z=rnd(-Math.max(zLim,10),Math.max(zLim,10));
@@ -103,7 +349,10 @@ function buildShot(L,lightKey,kind){
     S.pitch=-Math.PI/2; S.fov=FOV_TOP; S.steps=L.kind==='rocky'?30:(mg>25?22:13); S.maxH=mg; S.nearH=mg;
     S.dur=rnd(4.2,7);
   } else {
-    const mode=pick(['along','along','along','sea','quarter','quarter']);
+    /* Looking along the coast was half of all angled shots, and the eye reads a shore running straight to
+       the horizon as made; now a third, turned further out to sea, so the coast leaves the picture or
+       bends away (the far coast ends within a few kilometres: farBend in js/shaders/terrain.js). */
+    const mode=pick(['along','along','sea','quarter','quarter','quarter']);
     let z=rnd(-zSpan*.28,zSpan*.28);
     const alongSign=Math.random()<.5?1:-1;
     if(mode==='along') z=-alongSign*rnd(zSpan*.08,zSpan*.26);
@@ -111,7 +360,7 @@ function buildShot(L,lightKey,kind){
     const dist=(L.dx<.7?rnd(120,210):rnd(190,430))*(L.kind==='rocky'?1.1:1);
     const pitch=-deg(mode==='along'?rnd(11,30):rnd(14,40));
     let head,offs;
-    if(mode==='along'){ head=alongSign*(Math.PI*.5-rnd(.14,.62)*(Math.random()<.82?1:-.5)); offs=rnd(25,90); }
+    if(mode==='along'){ head=alongSign*(Math.PI*.5-rnd(.24,.66)*(Math.random()<.82?1:-.4)); offs=rnd(25,90); }
     else if(mode==='sea'){ head=rnd(-.5,.5); offs=rnd(45,120); }
         else { head=(Math.random()<.5?1:-1)*rnd(.55,1.05); offs=rnd(10,60); }
     const T=[shore+offs,0,z];
@@ -139,17 +388,42 @@ function buildShot(L,lightKey,kind){
    by slow dissolves (frame.js). Fast low passes are left out. An ordinary shot's path is stretched to
    suit the longer time, lifted clear of any hill along the way, and checked at both ends as well as in
    the middle, so the water stays the subject for the whole shot. */
-function makeCalmShot(L,lightKey){
-  const r=Math.random(), kind=r<.40?'top':r<.86?'angled':'canopy';
+/* o (for reels, js/reel.js), all optional: kind ('top', 'angled', 'canopy' or 'crossing'), dur (seconds), pace
+   ('slow', 'usual' or 'lively': how fast the drone drifts) and move (makeMove below). Left out, the shot is
+   made as calm mode chooses, so films with a seed repeat. */
+const PACE={slow:.6,usual:1,lively:1.6};
+function makeCalmShot(L,lightKey,o){
+  const r=Math.random(); let kind=r<.38?'top':r<.80?'angled':r<.88?'canopy':'crossing';
+  if(o&&['top','angled','canopy','crossing'].includes(o.kind)) kind=o.kind;
+  /* A reveal and a rise are angled; a wide shot is angled or straight down. */
+  if(o&&o.move&&(o.move!=='wide'||kind==='canopy'||kind==='crossing')) kind='angled';
+  /* Low over dark trees at night shows little: angled instead. */
+  if(lightKey&&dimLight(lightKey)&&(kind==='top'||kind==='crossing')) kind='angled';
+  /* A reel's movie can have any time of day. Straight down, a low sun's light is flat and dull, which is
+     why the slideshow never shows golden hour from straight above: below 16 degrees, angled instead. */
+  if(o&&kind==='top'&&LIGHTS[lightKey]&&LIGHTS[lightKey].el<16) kind='angled';
+  /* Facing a low sun is decided once per shot, not per try (see the glare guard above). */
+  const sunOk=Math.random()<SUN_SHARE;
+  const pace=o&&PACE[o.pace]||1;
+  if(o&&o.move){ const M=makeMove(L,lightKey,kind,o,sunOk,pace); if(M) return M; }
+  if(kind==='crossing'){
+    const C=makeCrossing(L,lightKey||pickLight(L,'crossing'),sunOk,{calm:true,pace,dur:o&&o.dur,v:o&&o.v});
+    if(C) return C;
+    kind='canopy';
+  }
   let S=null;
   for(let i=0;i<12;i++){
-    if(kind==='canopy'){ S=buildCanopy(L,lightKey||pick(L.lights),{speed:rnd(1.,2.),dur:rnd(24,40)}); return S; }
-    S=makeShot(L,lightKey,kind);
-    S.dur=rnd(35,75);
-    const speed=kind==='top'?rnd(.4,1.1)*(L.dx<.7?1:1.5):rnd(.7,1.9);
+    if(kind==='canopy'){
+      const lk=lightKey||pickLight(L,'canopy');
+      for(let j=0;j<8;j++){ S=buildCanopy(L,lk,{speed:rnd(1.,2.)*pace,dur:o&&o.dur||rnd(24,40)}); if(!sunWrong(S,sunOk,[0,.5,1])) break; }
+      return S;
+    }
+    S=makeShot(L,lightKey,kind,sunOk);
+    S.dur=o&&o.dur||rnd(35,75);
+    const speed=(kind==='top'?rnd(.4,1.1)*(L.dx<.7?1:1.5):rnd(.7,1.9))*pace;
     stretchPath(S,speed*S.dur);
     S.yaw1=S.yaw0+(kind==='top'?rnd(-.3,.3):rnd(-.1,.1));
-    if(calmOk(S)) break;
+    if(calmOk(S)&&!sunWrong(S,sunOk,[0,1])) break;
   }
   return S;
 }
@@ -181,17 +455,120 @@ function calmOk(S){
     const f=(c.ro[2]+c.F[2]*d-L.domMin[1])/L.domSize[1];
     if(f<.1||f>.9) return false;
   }
-  return true;
+  return peopleClear(S);
+}
+/* ---- Camera moves, for the opening and closing shots of a reel's movies ----
+     wide    an establishing shot: angled from further out and higher, so a long stretch of the coast is
+             in view, or straight down from near the highest a straight-down shot goes; slow.
+     reveal  angled: the drone starts looking steeply down (58 to 72 degrees) at the water and the surf,
+             and tilts up over the shot to an ordinary view (13 to 21 degrees down) along the coast or out
+             to sea, as it drifts forward: the classic drone reveal of the coast and the horizon.
+     rise    angled: the drone climbs 40 to 80% higher as it drifts back, tilting down to keep the same
+             stretch of shore in the middle of the picture: a way to leave a place.
+   The tilt (S.pitch to S.pitch1, in cameraFor) eases in and out and is done by 85% of the way, so the
+   shot settles on its last view before the dissolve.
+   Each try is checked from start to end as calm shots are (calmOk), and for rock or land standing close in
+   the picture (viewRate). A reveal's first, steep view must be water and surf: no land, no rock. If no
+   try passes, the shot is an ordinary calm shot of the same kind. */
+function makeMove(L,lightKey,kind,o,sunOk,pace){
+  const lk=lightKey||pickLight(L,kind), dur=o.dur||rnd(35,75);
+  const B={wide:buildWide,reveal:buildReveal,rise:buildRise}[o.move];
+  if(!B) return null;
+  for(let i=0;i<(o.move==='wide'?16:40);i++){
+    const S=B(L,lk,kind,dur,pace,sunOk);
+    if(S&&!sunWrong(S,sunOk,[0,.5,1])&&moveOk(S,o.move)){ S.move=o.move; return S; }
+  }
+  return null;
+}
+function moveOk(S,move){
+  const L=S.L, top=S.kind==='top';
+  for(const u of [0,.5,1]){
+    const r=rateShot(S,u);
+    if(move==='reveal'&&u===0){ if(r.inland>.02||r.water<.4||r.water+r.shore<.8) return false; }
+    else if(r.inland>(move==='wide'?.22:top?.2:.17)||r.water<.15||r.shore<.03) return false;
+    const c=cameraFor(S,u,0,1), d=c.F[1]<-.05?Math.min(-c.ro[1]/c.F[1],600):400;
+    const f=(c.ro[2]+c.F[2]*d-L.domMin[1])/L.domSize[1];
+    if(f<.1||f>.9) return false;
+    /* The drone itself stays over the simulated stretch, so the water close below it is the simulated sea. */
+    const fz=(c.ro[2]-L.domMin[1])/L.domSize[1], fx=(c.ro[0]-L.domMin[0])/L.domSize[0];
+    if(fz<.04||fz>.96||fx<.05||fx>1) return false;
+  }
+  for(const u of [0,.5,1]){ const v=viewRate(S,u); if(v.wall>(move==='reveal'&&u===0?.01:.05)) return false; }
+  return peopleClear(S);
+}
+/* Above the ground everywhere along the path, by at least gap metres, and the ray march's limits widened
+   to the whole path. */
+function clearPath(S,gap){
+  const L=S.L; let need=0;
+  for(let i=0;i<=12;i++){ const t=i/12,x=S.p0[0]+(S.p1[0]-S.p0[0])*t,z=S.p0[2]+(S.p1[2]-S.p0[2])*t,y=S.p0[1]+(S.p1[1]-S.p0[1])*t;
+    need=Math.max(need,maxGroundNear(L,x,z,40)+gap-y); }
+  if(need>0){ S.p0[1]+=need; S.p1[1]+=need; }
+  S.nearH=Math.max(...[S.p0,S.p1].map(p=>maxGroundNear(L,p[0],p[2],380)+14));
+}
+function buildWide(L,lk,kind,dur,pace,sunOk){
+  if(kind==='top'){
+    const S=makeShot(L,lk,'top',sunOk,{high:true});
+    S.dur=dur; stretchPath(S,rnd(.3,.8)*(L.dx<.7?1:1.5)*pace*dur); S.yaw1=S.yaw0+rnd(-.15,.15);
+    return S;
+  }
+  /* Angled: high, over the water off one end of the stretch, looking along the coast toward the other end
+     and a little out to sea, so the shore runs away into the distance. */
+  const S={L,lightKey:lk,kind:'angled',noise:rnd(1000)};
+  const zSpan=L.domSize[1], big=L.dx>=.7, rocky=L.kind==='rocky';
+  const sgn=Math.random()<.5?1:-1, head=sgn*(Math.PI*.5-rnd(.24,.55)), pitch=-deg(rnd(13,22));
+  const alt=big?rnd(120,190):rnd(75,120), z=-sgn*rnd(.18,.34)*zSpan, x=shoreAt(L,z)+rnd(-20,60)*(rocky?1.2:1);
+  const len=rnd(.5,1.1)*pace*dur, dx=Math.cos(head)*len, dz=Math.sin(head)*len;
+  S.p0=[x-dx*.5,alt,z-dz*.5]; S.p1=[x+dx*.5,alt+rnd(-3,5),z+dz*.5];
+  S.yaw0=head; S.yaw1=head+rnd(-.06,.06); S.pitch=pitch; S.fov=FOV_ANG;
+  S.steps=rocky?40:38; S.maxH=L.maxH; S.dur=dur; S.start=0;
+  clearPath(S,40);
+  return S;
+}
+function buildReveal(L,lk,kind,dur,pace){
+  const S={L,lightKey:lk,kind:'angled',noise:rnd(1000)};
+  const zSpan=L.domSize[1], big=L.dx>=.7, rocky=L.kind==='rocky';
+  const sgn=Math.random()<.5?1:-1, along=Math.random()<.7;
+  const head=along?sgn*(Math.PI*.5-rnd(.2,.6)):rnd(-.5,.5);
+  const z=along?-sgn*rnd(zSpan*.05,zSpan*.22):rnd(-zSpan*.25,zSpan*.25);
+  const h=big?rnd(70,130):rnd(45,85), pitch0=-deg(rnd(58,72)), pitch1=-deg(rnd(13,21));
+  /* Placed so the first, steep view looks down on the water just off the shore. */
+  const ahead=h/Math.tan(-pitch0), x=shoreAt(L,z)+rnd(rocky?20:10,rocky?80:60)-Math.cos(head)*ahead;
+  const len=rnd(.5,1.2)*pace*dur, dx=Math.cos(head)*len, dz=Math.sin(head)*len;
+  S.p0=[x-dx*.3,h,z-dz*.3]; S.p1=[x+dx*.7,h+rnd(0,8),z+dz*.7];
+  S.yaw0=head; S.yaw1=head+rnd(-.06,.06); S.pitch=pitch0; S.pitch1=pitch1; S.fov=FOV_ANG;
+  S.steps=rocky?40:38; S.maxH=L.maxH; S.dur=dur; S.start=0;
+  clearPath(S,30);
+  return S;
+}
+function buildRise(L,lk,kind,dur,pace,sunOk){
+  /* Built backwards from where it ends: an ordinary angled view, rated as the slideshow rates its own, so
+     what comes into the picture below the drone as it backs away is what any angled shot shows. It starts
+     lower and closer, by a little less than keeps the same angle to what it's looking at, so the place
+     grows smaller in the picture as the drone leaves it. */
+  const S=makeShot(L,lk,'angled',sunOk);
+  const c=[0,1,2].map(i=>(S.p0[i]+S.p1[i])*.5), h1=c[1], k=1+Math.min(rnd(.45,.8)*Math.sqrt(pace),1), h0=h1/k;
+  const D1=h1/Math.tan(-S.pitch), lb=D1*(1-1/k)*rnd(.5,.85), fx=Math.cos(S.yaw0)*lb, fz=Math.sin(S.yaw0)*lb;
+  S.p0=[c[0]+fx,h0,c[2]+fz]; S.p1=c;
+  /* The point in the middle of the picture stays in the middle: it tilts down a little as it climbs. */
+  S.pitch1=S.pitch; S.pitch=-Math.atan2(h0,D1-lb);
+  S.yaw1=S.yaw0+rnd(-.05,.05); S.dur=dur; S.start=0;
+  clearPath(S,24);
+  return S;
 }
 function cameraFor(S,u,t,aspect){
   const e=u*u*(3-2*u); const k=.15*e+.85*u;
   const p=[0,1,2].map(i=>S.p0[i]+(S.p1[i]-S.p0[i])*k);
+  /* A crossing's height follows its profile (crossProfile above). */
+  if(S.prof){ const f=Math.min(Math.max(k,0),1)*CROSS_N, i=Math.min(Math.floor(f),CROSS_N-1), a=f-i; p[1]=S.prof[i]*(1-a)+S.prof[i+1]*a; }
   const n=S.noise+t;
   const sway=(a,b)=>Math.sin(n*a+b)*.6+Math.sin(n*a*2.3+b*1.7)*.4;
   const sc=S.kind==='top'?.32:.42;
   p[0]+=sway(.43,1.3)*sc; p[1]+=sway(.31,4.2)*sc*.5; p[2]+=sway(.37,2.2)*sc;
   const yaw=S.yaw0+(S.yaw1-S.yaw0)*k+sway(.21,5.5)*.0022;
-  const pit=S.pitch+sway(.27,3.1)*.0017;
+  /* A tilt over the shot (camera moves, above), eased in and out and finished by 85% of the way. */
+  let pit=S.pitch;
+  if(S.pitch1!==undefined&&S.kind!=='top'){ const v=Math.min(Math.max(u/.85,0),1); pit+=(S.pitch1-S.pitch)*v*v*(3-2*v); }
+  pit+=sway(.27,3.1)*.0017;
   let F,Up,R;
   if(S.kind==='top'){
     F=[0,-1,0]; Up=[Math.cos(yaw),0,Math.sin(yaw)]; R=vcross(F,Up);

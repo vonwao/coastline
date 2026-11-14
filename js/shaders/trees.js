@@ -12,23 +12,31 @@ void main(){ oA=vec4(vM,1.); oL=vL; }`;
 
 /* ------ Where plants grow. Cards and full 3D models both use this, so they always agree. ------ */
 const PLANT_GLSL=`
-uniform int uType,uShrub; uniform float TILE,uEdge;
+uniform int uType,uShrub; uniform float TILE,uEdge,uGreenD;
 uniform vec2 uDomMin,uDomSize,uFarMin,uFarSize;
 uniform sampler2D tTerr,tTerrF,tLit,tLitF,tNoise;
 const float CELLS=18.;
+/* Greenery (a recipe lever) scales the plant-cover channel (b) wherever it's read, here and in the view
+   shader, so plants, their shadows and the green of the ground stay in agreement. uGreenD is greenery
+   minus 1, so a program never told it (0) grows plants as the coast does. More greenery never pushes
+   cover past full. */
+vec4 green(vec4 m){ m.b=min(m.b*(1.+uGreenD),max(m.b,1.)); return m; }
 vec2 h2(vec2 p){ p=mod(p,CELLS); vec3 p3=fract(vec3(p.xyx)*vec3(.1031,.1030,.0973)); p3+=dot(p3,p3.yzx+33.33); return fract((p3.xx+p3.yz)*p3.zy); }
 vec2 hr(vec2 p){ vec3 p3=fract(vec3(p.xyx)*vec3(.1031,.1030,.0973)); p3+=dot(p3,p3.yzx+33.33); return fract((p3.xx+p3.yz)*p3.zy); }
 vec2 rotT(vec2 p,float tile){ float a=tile*2.399; float c=cos(a),s=sin(a); return vec2(c*p.x-s*p.y,s*p.x+c*p.y); }
 vec2 toWorld(vec2 r,float tile){ float a=tile*2.399,c=cos(a),s=sin(a); return vec2(c*r.x+s*r.y,-s*r.x+c*r.y); }
 float edgeW(vec2 uv){ vec2 e=min(uv,1.-uv); return smoothstep(0.,uEdge,min(e.x,e.y)); }
 vec4 terrS(vec2 p){ vec2 uv=(p-uDomMin)/uDomSize; float w=edgeW(uv); vec4 f=textureLod(tTerrF,(p-uFarMin)/uFarSize,0.);
-  if(w<=0.) return f; vec4 n=textureLod(tTerr,uv,0.); return mix(f,n,w); }
+  if(w<=0.) return green(f); vec4 n=textureLod(tTerr,uv,0.); return green(mix(f,n,w)); }
 float nz0(vec2 p,float tile,int ch){ vec4 v=textureLod(tNoise,rotT(p,tile)/tile,max(log2(2.*512./tile),0.)); return ch==0?v.r:v.g; }
 vec2 plantPos(vec2 ip){ return toWorld((ip+h2(ip))/CELLS*TILE,TILE); }
-/* Shrubs and grass grow in clumps and drifts with bare sand between, not spread evenly like a
-   planted bed. The same function is in the main view shader, for their shadows. */
-float shrubClump(vec2 wp){ return 1.75*smoothstep(.36,.66,nz0(wp,23.,0)*.62+nz0(wp,7.3,1)*.38); }
-/* Models: 0-1 palm, 2-3 broadleaf, 4 pine, 5 conifer, 6 shrub, 7 grass */
+/* Where plants grow (COVER_GLSL in js/shaders/view.js), shared with the view shader for shadows and litter.
+   Here uType is the kind of plants, which the view shader calls uFlora. */
+float nzFixed(vec2 p,float tile,int ch){ return nz0(p,tile,ch); }
+#define uFlora uType
+`+COVER_GLSL+`
+#undef uFlora
+/* Models: 0-1 palm, 2-3 broadleaf, 4 pine, 5 conifer, 6 shrub, 7 grass, 8-9 broadleaf, 10 fern */
 bool plantGrows(vec2 ip,vec2 wp,out float ground,out float scale,out int model,out float yaw,out vec2 tint,out float lit){
   ground=0.;scale=1.;model=0;yaw=0.;tint=vec2(0.);lit=1.;
   vec2 j=h2(ip),k=h2(ip+37.),u=hr(ip+71.3);
@@ -38,30 +46,42 @@ bool plantGrows(vec2 ip,vec2 wp,out float ground,out float scale,out int model,o
   float e=4.;
   float sx=terrS(wp+vec2(e,0.)).r-terrS(wp-vec2(e,0.)).r, sz=terrS(wp+vec2(0.,e)).r-terrS(wp-vec2(0.,e)).r;
   if(length(vec2(sx,sz))/(2.*e)>.5) return false;
-  float cover=nz0(wp,1730.,0)*.62+nz0(wp,547.,1)*.38;
-  float wood=smoothstep(.30,.52,cover+.28*(nz0(wp,133.,0)-.5)+(uType==0?.10:0.));
-  /* Clearings: gaps in the woods, with a few lone trees left standing in them. */
-  wood*=smoothstep(.40,.50,nz0(wp+311.,1100.,0)+.3*(nz0(wp,160.,0)-.5));
-  float cov=uShrub>0?smoothstep(.02,.55,m.b)*.7*(1.-.6*smoothstep(.6,.9,m.b))*shrubClump(wp):smoothstep(.22,.85,m.b)*mix(.07,1.08,wood);
-  if(id>cov) return false;
+  /* The woods, with their clearings and a few lone trees left standing in them, as the plant cover
+     shapes them (woodAt). */
+  float wood=uShrub>0?0.:woodAt(wp);
+  float cov=uShrub>0?shrubCov(wp,m.b):treeCov(m.b,wood);
+  /* In the shrub layer, a cell the shrubs and grass leave empty may hold a fern (fernCov), under woods
+     only: the woods are looked up only where the cover could be woods. */
+  bool fern=false;
+  if(id>cov){
+    /* (A preset's mats grow out on the open dunes, where the cover is thin.) */
+    if(uShrub==0||(m.b<.42&&!(uVeg>0&&uVegM.x>.5))) return false;
+    if(id>cov+fernCov(m.b,woodAt(wp),wp)) return false;
+    fern=true;
+  }
   /* Woods grow in stands: one species dominates an area, trees are all tall or all young,
      and the colour drifts from place to place. Young trees also grow at the edges. */
   float stand=smoothstep(.40,.60,nz0(wp+41.,900.,0));
   float tall=smoothstep(.40,.60,nz0(wp+77.,620.,0));
-  scale=mix(.72,1.28,k.x)*mix(.68,1.32,tall)*mix(.72,1.,smoothstep(.22,.7,m.b));
+  scale=mix(.72,1.28,k.x)*mix(.68,1.32,tall)*mix(.72,1.,smoothstep(.22,.7,m.b))*treeAge(wood);
   /* Four broadleaf shapes: two carry their crown on a bare trunk (2, 3), one has a deep crown that
      starts low (8), and one is a low tree of several stems (9). Each area favours one of them, so
      they grow in groups, with the others mixed in. */
   float bz=nz0(wp+523.,380.,0);
   float bpick=u.y<.55?bz:fract(u.y*3.7);
   int broad=bpick<.22?2:bpick<.38?3:bpick<.72?8:9;
-  if(uShrub>0){
-    float grassy=uType==0?.3:uType==1?.62:.5;
-    model=u.y<grassy?7:6;
-    scale=model==7?mix(.7,1.5,k.x):mix(.55,1.45,k.x);
+  if(fern){ model=10; scale=groundScale(k.x); }
+  else if(uShrub>0){
+    model=u.y<grassShare(uType,m.b)?7:6;
+    scale=smallScale(model==7,k.x);
+  } else if(uVeg>0){
+    /* A preset's own mix: palms (models 0, 1), its pine (4) and its conifer (5) by their shares, one
+       growing more where the stands run one way and the other the other way; broadleaf trees for the rest. */
+    float palmP=palmShare(stand,m.b), pineP=uVegT.y*mix(.55,1.45,1.-stand), conP=uVegT.z*mix(.55,1.45,stand);
+    model=k.y<palmP?(u.y<.5?0:1):k.y<palmP+pineP?4:k.y<palmP+pineP+conP?5:broad;
   } else if(uType==0){
     /* Palms crowd the beach and thin out inland. */
-    float palmP=mix(.22,.94,stand)*mix(1.,.55,smoothstep(.45,.9,m.b))+.25*(1.-smoothstep(.25,.6,m.b));
+    float palmP=palmShare(stand,m.b);
     model=k.y<palmP?(u.y<.5?0:1):broad;
   } else if(uType==1) model=k.y<mix(.88,.10,stand)?broad:4;
   /* Mountain forest: mostly spruce-like conifers, some pines, a few broadleaf trees by the water. */
@@ -76,6 +96,15 @@ bool plantGrows(vec2 ip,vec2 wp,out float ground,out float scale,out int model,o
   return true;
 }`;
 const PLANT_TINT=`
+/* Each model's own colour in a vegetation preset (js/vegetation.js): a factor on the green, and how much
+   of its colour is taken out (grey-green sage and olive). All zero means not set: as the kind of plants. */
+uniform vec4 uMTint[11];
+vec3 plantTint(int type,vec2 t);
+vec3 modelTint(int type,vec2 t,int m){
+  vec3 c=plantTint(type,t); vec4 k=uMTint[m];
+  if(k.r+k.g+k.b<=0.) return c;
+  return mix(c,vec3(dot(c,vec3(.3,.59,.11))),k.w)*k.rgb;
+}
 vec3 plantTint(int type,vec2 t){
   vec3 a,b;
   if(type==0){ a=vec3(.030,.050,.024); b=vec3(.070,.094,.042); }
@@ -83,7 +112,11 @@ vec3 plantTint(int type,vec2 t){
   else if(type==3){ a=vec3(.020,.036,.026); b=vec3(.048,.068,.044); }
   else { a=vec3(.030,.046,.024); b=vec3(.070,.086,.040); }
   vec3 c=mix(a,b,t.x);
+  /* Some plants are olive, some a cooler, darker green, some a light yellow-green, as plants of one kind
+     differ with age, shade and soil. */
   if(t.y>.88) c=mix(c,vec3(.085,.085,.04),.42);
+  else if(t.y<.10) c*=vec3(.84,.94,1.0);
+  else if(t.y<.21) c=mix(c,c*vec3(1.28,1.20,.78),.65);
   return c;
 }
 /* The sun's direction in a turned model's frame, as weights on its four baked light directions */
@@ -99,7 +132,13 @@ const PLANT_SHADE=`
 float skyVis(float amb,vec4 l){ return clamp(.5*amb+.5*dot(l,vec4(.3165)),0.,1.); }
 /* Bark below hue .06 (palm trunks are paler), then foliage from deep green to dry straw */
 vec3 plantShade(float bright,float hue,float sv,float vis,vec3 tint,float lit,vec3 sky,vec3 back,vec3 sunE){
-  vec3 leaf=mix(tint,tint*vec3(1.42,1.26,.82)+vec3(.030,.024,.012),smoothstep(.25,1.,hue))*(.42+1.25*bright);
+  vec3 leaf=mix(tint,tint*vec3(1.42,1.26,.82)+vec3(.030,.024,.012),smoothstep(.25,1.,hue));
+  /* Leaves that have turned: past .7 they yellow, and a narrow band at .925 is dry and brown (set per leaf
+     in js/plants.js). Dead palm fronds, at .98, stay straw. */
+  float dry=smoothstep(.89,.905,hue)*(1.-smoothstep(.945,.96,hue));
+  leaf=mix(leaf,vec3(.17,.15,.05),smoothstep(.7,.86,hue)*(1.-smoothstep(.87,.89,hue))*.8);
+  leaf=mix(leaf,vec3(.135,.095,.055),dry);
+  leaf*=.42+1.25*bright;
   vec3 bark=mix(vec3(.105,.085,.066),vec3(.20,.172,.14),smoothstep(.005,.03,hue))*(.5+1.05*bright);
   float lf=smoothstep(.04,.08,hue);
   /* Leaves were darker than real ones, with a stronger sun to make up for it. That looked right in
@@ -133,8 +172,9 @@ precision highp float; precision highp int; precision highp sampler2D;
 `+PLANT_GLSL+PLANT_TINT+`
 uniform ivec2 uOrigin; uniform int uGrid; uniform vec2 uJit;
 uniform vec3 uRo,uR,uU,uF,uSun,uRef,uSunE; uniform float uTan,uAspect,uDA,uDB,uMaxD,uMeshD,uTime,uFogB,uCloudShade,uCloudT,uFreeView;
-uniform vec2 uModel[10];
+uniform vec2 uModel[11];
 uniform sampler2D tEnv;
+`+CLOUD_SHADOW+`
 out vec2 vUV; flat out vec3 vTint,vSky,vFogC,vBack; flat out vec4 vW; flat out float vLit,vFade,vHand,vFog,vAz,vRow,vNear,vLayer;
 vec2 envUV(vec3 d){ return vec2(atan(d.z,d.x)/(2.*PI)+.5,asin(clamp(d.y,-1.,1.))/PI+.5); }
 const float E[5]=float[5](6.,18.,32.,50.,84.);
@@ -178,9 +218,9 @@ void main(){
   gl_Position=vec4(dot(v,uR)/(uTan*uAspect),dot(v,uU)/uTan,uDA*z+uDB,z); gl_Position.xy-=uJit*gl_Position.w;
   vUV=corner;
   vW=sunWeights(uSun,yaw);
-  vTint=plantTint(uType,tint);
+  vTint=modelTint(uType,tint,model);
   float cs=1.;
-  if(uCloudShade>0.){ float c=textureLod(tNoise,wp/3400.+vec2(uCloudT*.0011,uCloudT*.0006),0.).r; cs=1.-uCloudShade*smoothstep(.47,.66,c); }
+  cs=cloudShadow(C);
   vLit=lit*cs;
   vSky=textureLod(tEnv,envUV(normalize(vec3(0.,1.6,0.))),6.2).rgb*PI*.68;
   vec3 rh=F; rh.y=max(rh.y,.012); rh=normalize(rh);
@@ -192,7 +232,7 @@ void main(){
 const FS_CARDS=HEAD+PLANT_SHADE+`
 precision highp sampler2DArray;
 in vec2 vUV; flat in vec3 vTint,vSky,vFogC,vBack; flat in vec4 vW; flat in float vLit,vFade,vHand,vFog,vAz,vRow,vNear,vLayer; layout(location=0) out vec4 o;
-uniform sampler2DArray tPA,tPL; uniform vec3 uSunE;
+uniform sampler2DArray tPA,tPL; uniform vec3 uSunE; uniform float uNoiseF;
 float h1(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
 void main(){
   /* Plants dissolve at the far end of their range, with noise fixed to the plant so it doesn't crawl. */
@@ -200,7 +240,7 @@ void main(){
   /* Handing over to the full model: the model keeps the pixels where this screen noise is below its
      fade, and the card keeps exactly the rest. With unrelated noise in each, about a quarter of the
      pixels had neither half way through, and the plant looked see-through. */
-  if(vHand<1.&&fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))))<1.-vHand) discard;
+  if(vHand<1.&&fract(52.9829189*fract(dot(gl_FragCoord.xy+5.588238*uNoiseF,vec2(.06711056,.00583715))))<1.-vHand) discard;
   vec2 sc=vec2(1./12.,1./5.);
   vec2 gx=dFdx(vUV)*sc,gy=dFdy(vUV)*sc;
   float lod=.5*log2(max(dot(gx,gx),dot(gy,gy))*5760000.+1e-6);
@@ -234,6 +274,7 @@ layout(location=0) in vec3 aP; layout(location=1) in vec3 aM; layout(location=2)
 layout(location=3) in vec4 iA; layout(location=4) in vec4 iB; uniform vec2 uJit;
 uniform vec3 uRo,uR,uU,uF,uSun,uSunE; uniform float uTan,uAspect,uDA,uDB,uMeshD,uTime,uCloudShade,uCloudT; uniform int uType;
 uniform sampler2D tEnv,tNoise;
+`+CLOUD_SHADOW+`
 out vec3 vM,vTint,vSky,vBack,vP; out vec4 vL,vW; out float vLit,vFade,vCam;
 vec2 envUV(vec3 d){ return vec2(atan(d.z,d.x)/(2.*PI)+.5,asin(clamp(d.y,-1.,1.))/PI+.5); }
 void main(){
@@ -246,9 +287,9 @@ void main(){
   pos.xz+=vec2(.8,.5)*g*.012*h*smoothstep(.04,.08,aM.y);
   vec3 v=pos-uRo; float z=dot(v,uF);
   gl_Position=vec4(dot(v,uR)/(uTan*uAspect),dot(v,uU)/uTan,uDA*z+uDB,z); gl_Position.xy-=uJit*gl_Position.w;
-  vP=aP; vM=aM; vL=aL; vW=sunWeights(uSun,yaw); vTint=plantTint(uType,iB.yz);
+  vP=aP; vM=aM; vL=aL; vW=sunWeights(uSun,yaw); vTint=modelTint(uType,iB.yz,int(floor(iA.w)));
   float cs=1.;
-  if(uCloudShade>0.){ float n=textureLod(tNoise,iA.xz/3400.+vec2(uCloudT*.0011,uCloudT*.0006),0.).r; cs=1.-uCloudShade*smoothstep(.47,.66,n); }
+  cs=cloudShadow(iA.xyz);
   vLit=iB.w*cs;
   vSky=textureLod(tEnv,envUV(normalize(vec3(0.,1.6,0.))),6.2).rgb*PI*.68;
   vec3 F=normalize(v);
@@ -257,9 +298,9 @@ void main(){
   vCam=length(v);
 }`;
 const FS_MESH=HEAD+PLANT_SHADE+`
-in vec3 vM,vTint,vSky,vBack,vP; in vec4 vL,vW; in float vLit,vFade,vCam; layout(location=0) out vec4 o; uniform vec3 uSunE; uniform sampler2D tNoise;
+in vec3 vM,vTint,vSky,vBack,vP; in vec4 vL,vW; in float vLit,vFade,vCam; layout(location=0) out vec4 o; uniform vec3 uSunE; uniform sampler2D tNoise; uniform float uNoiseF;
 void main(){
-  float ign=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
+  float ign=fract(52.9829189*fract(dot(gl_FragCoord.xy+5.588238*uNoiseF,vec2(.06711056,.00583715))));
   /* Anything right at the lens thins out, so the drone can pass through a crown without the
      whole picture going dark. */
   if(ign>vFade*smoothstep(.9,2.,vCam)) discard;

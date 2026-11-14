@@ -20,13 +20,31 @@
 
    Open-Meteo's free service is for non-commercial use, and asks for credit: "Weather data by
    Open-Meteo.com, wave models by DWD". A product would need its paid plan or another source. */
-const LIVE={on:false,name:null,lat:0,lon:0,facing:null,hour:null,wx:null,utcOff:null,locs:null,info:null,next:0,key:null,ver:0,desc:null,seed:301,fails:0};
+const LIVE={on:false,name:null,lat:0,lon:0,facing:null,hour:null,wx:null,utcOff:null,locs:null,info:null,next:0,key:null,ver:0,desc:null,seed:301,fails:0,req:0};
 (function(){
   const v=Q.get('live'); if(!v) return;
   const [la,lo,fa]=v.split(',').map(Number); if(!isFinite(la)||!isFinite(lo)) return;
   LIVE.on=true; LIVE.lat=la; LIVE.lon=lo; if(isFinite(fa)) LIVE.facing=fa;
   if(Q.has('hour')) LIVE.hour=+Q.get('hour');
 })();
+/* ---- Follow the clock, on the made-up coasts, with no forecast: ?clock=1, or
+   ?clock=<latitude>[,<longitude>[,<facing>]] ----
+   The light follows the viewer's own time of day, so a screen left running goes from morning to golden hour
+   to twilight to moonlight by itself: the sun from the time, at latitude 30° unless given, the moon in its
+   real place and phase, and a cloud cover that changes from day to day (?cloud= fixes it). Without a
+   longitude, the time zone's standard offset stands in for one, so the sun is highest near 12:00 standard
+   time. The coast faces west unless told otherwise, so the sun sets over the sea. ?hour= on its own does the
+   same for today at that hour on the viewer's clock, for trying it out. A beach being followed wins. */
+(function(){
+  if(LIVE.on||(!Q.has('clock')&&!Q.has('hour'))) return;
+  const v=Q.get('clock')||'', [la,lo,fa]=(v.includes(',')?v:v==='1'||v===''?'':v).split(',').map(s=>s===''?NaN:+s);
+  const now=new Date(), y=now.getFullYear();
+  const std=Math.max(new Date(y,0,1).getTimezoneOffset(),new Date(y,6,1).getTimezoneOffset());
+  LIVE.clock={lat:isFinite(la)?la:30,lon:isFinite(lo)?lo:-std/4,facing:isFinite(fa)?fa:270,
+    hour:Q.has('hour')?+Q.get('hour'):null,utcOff:-now.getTimezoneOffset()*60,cloud:Q.has('cloud')?+Q.get('cloud'):null};
+})();
+/* No forecast: some cloud, more on some days than others (changing at local midnight), never overcast. */
+function clockWeather(C){ const day=Math.floor((liveTime(C)+C.utcOff*1000)/86400000); return {cloud:C.cloud??Math.round(22+18*(1+Math.sin(day*2.39996))),wind:8,rain:0}; }
 
 /* ---- Where the sun and moon are, to within about a degree (the low-precision formulas of the
    Astronomical Almanac). Elevation in degrees above the horizon; azimuth in degrees clockwise from north. */
@@ -52,11 +70,11 @@ function sunMoon(t,lat,lon){
   const cosE=Math.sin(s.dec)*Math.sin(m.dec)+Math.cos(s.dec)*Math.cos(m.dec)*Math.cos(s.ra-m.ra);
   return {sun:equToHoriz(s.ra,s.dec,d,lat,lon),moon:equToHoriz(m.ra,m.dec,d,lat,lon),lit:(1-cosE)/2};
 }
-/* Now, or today at ?hour= in the beach's local time. */
-function liveTime(){
-  if(LIVE.hour==null) return Date.now();
-  const off=(LIVE.utcOff??Math.round(LIVE.lon/15)*3600)*1000,day=86400000;
-  return Math.floor((Date.now()+off)/day)*day-off+LIVE.hour*3600000;
+/* Now, or today at ?hour= in the beach's local time (or, following the clock, the viewer's). */
+function liveTime(C=LIVE){
+  if(C.hour==null) return Date.now();
+  const off=(C.utcOff??Math.round(C.lon/15)*3600)*1000,day=86400000;
+  return Math.floor((Date.now()+off)/day)*day-off+C.hour*3600000;
 }
 
 /* ---- The light for a sun height, sky and moon ----
@@ -65,15 +83,15 @@ function liveTime(){
    twilight, the values were matched by eye: exposure rises as the light fades, as the eye adapts, but
    not all the way, so dusk still looks like dusk. */
 const SKY_LOOK=[
-  {el:-10,exposure:30,bloom:.10,sat:1.0,tint:[.98,1,1.03],fog:1/14000,cloudShade:0,turb:1.2},
-  {el:-6,exposure:13,bloom:.10,sat:1.0,tint:[.99,1,1.02],fog:1/12000,cloudShade:0,turb:1.2},
-  {el:-3,exposure:5.2,bloom:.11,sat:1.0,tint:[1,1,1.01],fog:1/11000,cloudShade:0,turb:1.25},
-  {el:0,exposure:2.3,bloom:.12,sat:1.0,tint:[1.02,1,.98],fog:1/10000,cloudShade:0,turb:1.3},
-  {el:4.5,exposure:1.0,bloom:.13,sat:1.0,tint:[1.035,1,.955],fog:1/9500,cloudShade:0,turb:1.3},
-  {el:10.5,exposure:.66,bloom:.12,sat:1.01,tint:[1.03,1,.96],fog:1/10000,cloudShade:0,turb:1.25},
-  {el:24,exposure:.41,bloom:.09,sat:1.02,tint:[1.02,1,.97],fog:1/15000,cloudShade:.30,turb:1.2},
-  {el:36,exposure:.35,bloom:.08,sat:1.03,tint:[1.01,1,.985],fog:1/19000,cloudShade:.32,turb:1.1},
-  {el:66,exposure:.31,bloom:.07,sat:1.03,tint:[1,1,1],fog:1/26000,cloudShade:.34,turb:1.0},
+  {el:-10,exposure:30,bloom:.10,sat:1.0,tint:[.98,1,1.03],fog:1/8000,cloudShade:0,turb:1.2},
+  {el:-6,exposure:13,bloom:.10,sat:1.0,tint:[.99,1,1.02],fog:1/7500,cloudShade:0,turb:1.2},
+  {el:-3,exposure:5.2,bloom:.11,sat:1.0,tint:[1,1,1.01],fog:1/7000,cloudShade:0,turb:1.25},
+  {el:0,exposure:2.3,bloom:.12,sat:1.0,tint:[1.02,1,.98],fog:1/6500,cloudShade:0,turb:1.3},
+  {el:4.5,exposure:1.0,bloom:.13,sat:1.0,tint:[1.035,1,.955],fog:1/6500,cloudShade:0,turb:1.3},
+  {el:10.5,exposure:.66,bloom:.12,sat:1.01,tint:[1.03,1,.96],fog:1/7000,cloudShade:0,turb:1.25},
+  {el:24,exposure:.41,bloom:.09,sat:1.02,tint:[1.02,1,.97],fog:1/7500,cloudShade:.30,turb:1.2},
+  {el:36,exposure:.35,bloom:.08,sat:1.03,tint:[1.01,1,.985],fog:1/8500,cloudShade:.32,turb:1.1},
+  {el:66,exposure:.31,bloom:.07,sat:1.03,tint:[1,1,1],fog:1/9500,cloudShade:.34,turb:1.0},
 ];
 function skyLook(el){
   const A=SKY_LOOK; let i=0; while(i<A.length-2&&el>A[i+1].el) i++;
@@ -126,24 +144,37 @@ function skyLight(D,seed){
   Li.stars=Li.starK*(1-.9*ov)*.3/Li.exposure;
   Li.seed=seed;
   /* The nearest of the fixed setups, saved with favourites in place of this one. */
-  Li.base=st>.5?'storm':ov>.5?'moody':D.sunEl<16?'golden':D.sunEl<32?(D.sunAz>0?'morning':'late'):'highSun';
+  Li.base=st>.5?'storm':ov>.5?'moody':night?(Li.moon>.15?'moonlit':'starry'):D.sunEl<-1?(D.sunEl>-5.5?'dawn':'dusk'):D.sunEl<4?'sunset':
+    D.sunEl<16?'golden':D.sunEl<32?(D.sunAz>0?'morning':'late'):'highSun';
   Li.label=night?`night, moon ${Li.moon>0?Math.round(D.lit*100)+'% lit, '+D.moonEl.toFixed(0)+'° up':'down'}`:D.sunEl<0?`twilight, sun ${D.sunEl.toFixed(0)}°`:`sun ${D.sunEl.toFixed(0)}° high`;
   Li.label+=`, cloud ${D.cloud}%`;
   return Li;
 }
+/* A fixed time of day for the made-up coasts (SKY_PRESETS in scenes.js), lit the same way as a real beach. */
+function skyPreset(k){
+  const P=SKY_PRESETS[k], Li=skyLight(Object.assign({moonEl:-20,moonAz:0,lit:0,wind:10,rain:0},P),P.seed||301);
+  if(P.exp){ Li.exposure*=P.exp; Li.stars/=P.exp; }
+  delete Li.base; Li.label=k;
+  return Li;
+}
 /* Every change of scene: if the sun, moon or weather has moved on, make a new lighting setup. Each gets
-   its own name, so a shot still on screen keeps its light; old ones are freed. */
+   its own name, so a shot still on screen keeps its light; old ones are freed. Following the clock works
+   the same way, with the viewer's time and no forecast. */
 function liveSky(){
-  if(!LIVE.on) return;
-  const P=sunMoon(liveTime(),LIVE.lat,LIVE.lon), face=LIVE.facing??90;
-  const wx=LIVE.wx||{cloud:40,wind:10,rain:0};
+  const C=LIVE.on?LIVE:LIVE.clock; if(!C) return;
+  const P=sunMoon(liveTime(C),C.lat,C.lon), face=C.facing??90;
+  const wx=LIVE.on?LIVE.wx||{cloud:40,wind:10,rain:0}:clockWeather(C);
   const D={sunEl:P.sun.el,sunAz:P.sun.az-face,moonEl:P.moon.el,moonAz:P.moon.az-face,lit:P.lit,cloud:wx.cloud,wind:wx.wind,rain:wx.rain,face,seed:LIVE.seed};
   const o=LIVE.desc;
   if(o&&Math.abs(o.sunEl-D.sunEl)<.4&&Math.abs(o.moonEl-D.moonEl)<1&&o.cloud===D.cloud&&o.wind===D.wind&&o.rain===D.rain&&o.face===D.face&&o.seed===D.seed) return;
   LIVE.desc=D;
   const key='live'+(++LIVE.ver);
-  LIGHTS[key]=skyLight(D,LIVE.seed); bakeEnv(LIGHTS[key]);
-  const old=LIGHTS['live'+(LIVE.ver-3)]; if(old){ gl.deleteTexture(old.env); delete LIGHTS['live'+(LIVE.ver-3)]; }
+  LIGHTS[key]=skyLight(D,LIVE.seed);
+  /* Following the clock, a screen in a room: a night without much moon is lifted, as the moonless preset
+     is, coming in gradually as the last of the twilight goes. A real beach stays as dark as it is. */
+  if(!LIVE.on&&LIGHTS[key].night===1){ const L=LIGHTS[key], f=1+.8*(1-Math.min((L.moon||0)/.3,1))*smooth(-10,-16,D.sunEl); L.exposure*=f; L.stars/=f; }
+  bakeEnv(LIGHTS[key]);
+  const old=LIGHTS['live'+(LIVE.ver-3)]; if(old){ freeEnv(old); delete LIGHTS['live'+(LIVE.ver-3)]; }
   LIVE.key=key;
   console.log('[sun]',LIGHTS[key].label,`sun ${D.sunEl.toFixed(1)}° at ${P.sun.az.toFixed(0)}°, moon ${D.moonEl.toFixed(1)}° at ${P.moon.az.toFixed(0)}°, ${Math.round(P.lit*100)}% lit, beach faces ${face.toFixed(0)}°`);
 }
@@ -161,7 +192,9 @@ function liveStart(lat,lon,facing,name=null){
 function liveStop(){
   if(!LIVE.on) return;
   Object.assign(LIVE,{on:false,name:null,locs:null,info:null,desc:null,key:null});
-  for(const L of LOCATIONS) if(L.orig){ Object.assign(L,L.orig); L.orig=null; buildSwell(L); }
+  /* The forecast's swell is each coast's live layer (waveLayer in js/recipe.js): taking it away leaves
+     the coast's own waves, or a recipe's or a reel's if one is set. */
+  for(const L of LOCATIONS) if(L.waveLayers&&L.waveLayers.live) waveLayer(L,'live',null);
 }
 async function liveFetch(){
   const q=`latitude=${LIVE.lat}&longitude=${LIVE.lon}`;
@@ -176,9 +209,14 @@ async function liveFetch(){
 async function liveUpdate(){
   if(!LIVE.on||performance.now()<LIVE.next) return;
   LIVE.next=performance.now()+30*60*1000;
+  /* An answer can take up to 20 s. If, by the time it comes, following has stopped, another place is
+     followed, or a newer request has gone out, it's dropped: it would put one beach's sea on another, or
+     bring the forecast's swell back after "Made-up sea". Its failure is dropped the same way. */
+  const req=++LIVE.req, lat=LIVE.lat, lon=LIVE.lon, stale=()=>req!==LIVE.req||!LIVE.on||LIVE.lat!==lat||LIVE.lon!==lon;
   /* Failures are retried every 5 minutes; only the first of a run is shown, so a long outage doesn't
      flash a message on the screen every 5 minutes. */
-  let r; try{ r=await liveFetch(); }catch(e){ console.warn('[live] forecast failed:',e.message); if(!LIVE.fails++) toast('Real conditions: could not reach Open-Meteo'); LIVE.next=performance.now()+5*60*1000; return; }
+  let r; try{ r=await liveFetch(); }catch(e){ if(stale()) return; console.warn('[live] forecast failed:',e.message); if(!LIVE.fails++) toast('Real conditions: could not reach Open-Meteo'); LIVE.next=performance.now()+5*60*1000; return; }
+  if(stale()) return;
   LIVE.fails=0;
   if(r.utcOff!=null) LIVE.utcOff=r.utcOff;
   const H=r.m.swell_wave_height??r.m.wave_height, T=r.m.swell_wave_period??r.m.wave_period, dir=r.m.swell_wave_direction??r.m.wave_direction;
@@ -191,10 +229,10 @@ async function liveUpdate(){
   LIVE.locs=LOCATIONS.filter(L=>L.real||kinds.includes(L.kind)&&L.form!==6);
   for(const L of LOCATIONS){
     if(L.form===6) continue;
-    if(!L.orig) L.orig={Hs:L.Hs,T:L.T,obl:L.obl};
-    /* A real coast (?coast=) faces the real way, so the swell meets it at its real angle. */
-    L.Hs=Math.max(.15,Math.min(3.,H)); L.T=Math.max(4,Math.min(16,T)); L.obl=dir!=null?(L.real?realObl(L,dir):(dir%30)-15):L.obl;
-    buildSwell(L);
+    /* The coast's live layer (waveLayer in js/recipe.js), over its own waves and any recipe's or reel's.
+       A real coast (?coast=) faces the real way, so the swell meets it at its real angle; with no
+       direction in the forecast, the angle is left as it is underneath. */
+    waveLayer(L,'live',{Hs:Math.max(.15,Math.min(3.,H)),T:Math.max(4,Math.min(16,T)),obl:dir!=null?(L.real?realObl(L,dir):(dir%30)-15):undefined});
   }
   LIVE.wx={cloud:r.w.cloud_cover??40,wind:r.w.wind_speed_10m??10,rain:r.w.precipitation??0};
   LIVE.seed++;

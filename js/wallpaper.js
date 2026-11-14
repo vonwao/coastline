@@ -12,6 +12,8 @@
    listener the way Wallpaper Engine's documentation describes. */
 window.wallpaperPropertyListener={
   applyUserProperties(p){
+    /* On the desktop the menu button (js/menu.js) would pop up whenever the mouse moved. */
+    window.IN_WALLPAPER=true;
     if(p.calm) CALM=!!p.calm.value;
     if(p.sound&&!!p.sound.value!==SOUND.on) toggleSound();
     if(p.beach){

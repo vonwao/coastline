@@ -6,13 +6,13 @@
    One mist puff alone is almost invisible; only many together read as white. ------ */
 const FS_SPRAY_STEP=HEAD+SIM_COMMON+`
 layout(location=0) out vec4 oP; layout(location=1) out vec4 oV;
-uniform sampler2D tP,tV;
+uniform sampler2D tP,tV,tBrk; uniform vec2 uBand; uniform int uRocky;
 vec3 h3(vec3 p){ p=fract(p*vec3(.1031,.1030,.0973)); p+=dot(p,p.yxz+33.33); return fract((p.xxy+p.yxx)*p.zyx); }
 void main(){
   ivec2 i=ivec2(gl_FragCoord.xy);
   vec4 P=texelFetch(tP,i,0),V=texelFetch(tV,i,0);
   if(P.w>0.){
-    bool mist=V.w>.6;
+    bool mist=mod(V.w,10.)>.6;
     if(mist){
       /* Air holds it up: it slows quickly, sinks gently and drifts with the onshore wind. */
       V.xyz+=(vec3(-1.3,-.35,.3)-V.xyz)*(1.-exp(-2.2*uDt));
@@ -27,7 +27,8 @@ void main(){
     vec3 r=h3(vec3(vec2(i)+.5,mod(uT*97.3,1000.)));
     ivec2 c=ivec2(r.xy*vec2(uCells-2))+1;
     vec4 C=F(c);
-    if(C.x>.04){
+    /* Off rock, and the old crest droplets: rocky coasts only, as before breakers had their own. */
+    if(C.x>.04&&uRocky>0){
       vec4 E=F(c+ivec2(1,0)),W=F(c-ivec2(1,0)),N=F(c+ivec2(0,1)),S=F(c-ivec2(0,1));
       vec2 vel=vec2(.5*(C.y+W.y),.5*(C.z+S.z));
       vec2 gb=vec2(E.w-W.w,N.w-S.w)/(2.*uDx);
@@ -56,13 +57,39 @@ void main(){
         P.xyz=vec3(uDomMin.x+(float(c.x)+r.z)*uDx,e+.1,uDomMin.y+(float(c.y)+q.y)*uDx);
       }
     }
+    /* Breaking crests (js/shaders/breakers.js): where the white water lands at the foot of the face it
+       throws up spray and mist, which travel on with the wave for a moment. A second random cell, from
+       the strip where waves break, so the chance of finding a crest is reasonable. */
+    if(P.w<=0.&&uBand.y>uBand.x){
+      vec3 rb=h3(r*57.3+vec3(vec2(i)*.37,2.));
+      ivec2 cb=ivec2(uBand.x+rb.x*(uBand.y-uBand.x),rb.y*float(uCells.y-2)+1.);
+      vec4 B=texelFetch(tBrk,cb,0);
+      if(B.r>.15){
+        float st=floor(B.b), stage=st/63., plunge=B.b-st;
+        float kDt=min(uDt*60.,1.);
+        float pB=min(B.r*.14,.3)*kDt*(smoothstep(.1,.6,stage)+.4*plunge);
+        if(rb.z<pB){
+          vec3 q=h3(rb*271.+vec3(i.yx,5.)), q2=h3(q*191.+1.);
+          vec2 d=vec2(cos(B.g),sin(B.g)), t=vec2(-d.y,d.x);
+          vec4 C=F(cb);
+          float H=B.r, cw=sqrt(9.81*max(C.x,.1)), sh=sqrt(H);
+          vec2 xz=uDomMin+(vec2(cb)+.5+d*B.a)*uDx+t*(q.x-.5)*uDx+d*H*mix(.35,.95,q.y);
+          bool mist=q2.y<.4;
+          if(mist){ V.xyz=vec3(d.x*cw*.55,(.8+1.6*q2.x)*sh,d.y*cw*.55); V.w=mix(.75,1.8,q.z)*clamp(sh,1.,1.5); P.w=.8+1.1*q2.z; }
+          else { V.xyz=vec3(d.x*cw*.75+t.x*(q2.z-.5)*2.,(1.4+3.*q2.x*q2.x)*sh,d.y*cw*.75+t.y*(q2.z-.5)*2.); V.w=mix(.03,.1,q.z*q.z); P.w=2.5; }
+          /* Size plus 10 marks spray from a breaker, so it can be left out of a picture (uBrk). */
+          V.w+=10.;
+          P.xyz=vec3(xz.x,C.x+C.w-H*.25,xz.y);
+        }
+      }
+    }
   }
   oP=P; oV=V;
 }`;
 const VS_SPRAY=`#version 300 es
 precision highp float; precision highp int; precision highp sampler2D;
 uniform sampler2D tP,tV,tLit,tEnv; uniform int uTexN;
-uniform vec3 uRo,uR,uU,uF,uSun,uSunE; uniform float uTan,uAspect,uDA,uDB,uDensity,uResY;
+uniform vec3 uRo,uR,uU,uF,uSun,uSunE; uniform float uTan,uAspect,uDA,uDB,uDensity,uResY; uniform int uBrk;
 uniform vec2 uDomMin,uDomSize,uJit;
 out vec2 vUV; out vec4 vCol; out vec2 vN; flat out float vMist;
 vec2 envUV(vec3 d){ return vec2(atan(d.z,d.x)/6.28318+.5,asin(clamp(d.y,-1.,1.))/3.14159+.5); }
@@ -71,7 +98,8 @@ void main(){
   vec4 P=texelFetch(tP,ti,0),V=texelFetch(tV,ti,0);
   vec2 c=vec2(float(gl_VertexID&1),float((gl_VertexID>>1)&1));
   vUV=c; vMist=0.;
-  if(P.w<=0.){ gl_Position=vec4(2.,2.,2.,1.); vCol=vec4(0.); vN=vec2(0.); return; }
+  bool fromBrk=V.w>=10.; V.w=mod(V.w,10.);
+  if(P.w<=0.||(fromBrk&&uBrk==0)){ gl_Position=vec4(2.,2.,2.,1.); vCol=vec4(0.); vN=vec2(0.); return; }
   bool mist=V.w>.6;
   vec3 toP=P.xyz-uRo; float z0=max(dot(toP,uF),1.);
   float px=z0*2.*uTan/uResY;
@@ -80,6 +108,8 @@ void main(){
     float s=V.w*(1.+.9*(1.-min(P.w/2.3,1.)));
     pos=P.xyz+(uR*(c.x-.5)+uU*(c.y-.5))*s*2.;
     a=smoothstep(0.,.8,P.w)*.075;
+    /* Mist right at the lens thins out, rather than filling the picture with a blur. */
+    a*=smoothstep(2.,10.,z0);
     vMist=1.;
   } else {
     /* A droplet smears along its path during the camera's shutter time. Too small to resolve, it

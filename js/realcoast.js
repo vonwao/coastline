@@ -24,7 +24,7 @@ function addRealCoast(meta,near,far){
   if(HQ){ const G=+(Q.get('grid')||1.5); L.dx/=G; L.nx=Math.round(L.nx*G); L.nz=Math.round(L.nz*G); }
   LOCATIONS.splice(0,LOCATIONS.length,L);
   REAL_COAST=L;
-  if(!Q.has('live')&&!TEST){ Object.assign(LIVE,{on:true,lat:meta.lat,lon:meta.lon,facing:meta.facing}); LIVE.name=meta.name; }
+  if(!Q.has('live')&&!TEST&&!Q.has('studio')&&!Q.has('recipe')){ Object.assign(LIVE,{on:true,lat:meta.lat,lon:meta.lon,facing:meta.facing}); LIVE.name=meta.name; }
   console.log('[coast]',meta.name,meta.source,JSON.stringify(meta.sources));
 }
 /* The swell's angle to this real shore, from the direction it comes from: 0 straight in. Beyond about 50

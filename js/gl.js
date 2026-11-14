@@ -115,6 +115,7 @@ function use(P,vals){
       case gl.INT: case gl.BOOL: gl.uniform1i(L,v); break;
       case gl.SAMPLER_2D: gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,v); gl.uniform1i(L,unit); unit++; break;
       case gl.SAMPLER_2D_ARRAY: gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D_ARRAY,v); gl.uniform1i(L,unit); unit++; break;
+      case gl.SAMPLER_3D: gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_3D,v); gl.uniform1i(L,unit); unit++; break;
     }
   }
   gl.activeTexture(gl.TEXTURE0);
@@ -124,4 +125,11 @@ function drawTo(f,w,h){
   gl.viewport(0,0,w??(f?f.w:canvas.width),h??(f?f.h:canvas.height));
   gl.drawArrays(gl.TRIANGLES,0,3);
 }
-const nextFrame=()=>new Promise(r=>requestAnimationFrame(r));
+/* The next frame. A hidden tab gets no frames, so a start would stop there until the tab was shown again
+   (it looked stuck): then a message, which isn't held back, or at worst a timer. */
+const nextFrame=()=>new Promise(r=>{
+  let done=false; const go=()=>{ if(!done){ done=true; r(); } };
+  requestAnimationFrame(go);
+  if(document.hidden){ const c=new MessageChannel(); c.port1.onmessage=go; c.port2.postMessage(0); }
+  else setTimeout(go,250);
+});

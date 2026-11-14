@@ -25,7 +25,8 @@ function webmWriter(w,h,fps,frames,write){
 }
 async function renderFavourite(F,opt){
   const {sub=4,ss=2,secs=0,preroll=4,fps=30,bitrate=45e6,blur=true,snaps=[],onData,onSnap,onProgress}=opt;
-  const S=shotOf(F); if(!S) throw new Error('Location not loaded: '+F.loc);
+  /* F: a saved favourite or a recipe (shotForRender in js/recipe.js). */
+  const S=shotForRender(F); if(!S) throw new Error('Location not loaded: '+F.loc);
   const L=S.L;
   state.paused=true; state.next=null; state.cur=S; state.scale=ss; applyScale();
   bakeLit(L,S.lightKey);
@@ -58,7 +59,7 @@ async function renderFavourite(F,opt){
       for(let q=0;q<camSamples;q++){
         const shotT=(f+(blur?(j+q/camSamples)/(2*sub):0))/fps;
         S.t=shotT; S.camT=S.noise+shotT;
-        if(sub>1){ sampleN++; renderJit=[((sampleN*.7548777)%1-.5)*2/canvas.width,((sampleN*.5698403)%1-.5)*2/canvas.height]; }
+        if(sub>1){ sampleN++; renderJit=[((sampleN*.7548777)%1-.5)*2/canvas.width,((sampleN*.5698403)%1-.5)*2/canvas.height]; renderNoiseF=sampleN%64; }
         renderHDR(S,shotT/S.dur);
         gl.disable(gl.DEPTH_TEST);
         gl.enable(gl.BLEND); gl.blendColor(0,0,0,1/(moments*camSamples)); gl.blendFunc(gl.CONSTANT_ALPHA,gl.ONE);
@@ -78,7 +79,7 @@ async function renderFavourite(F,opt){
     await nextFrame();
   }
   await enc.flush(); enc.close();
-  renderJit=[0,0];
+  renderJit=[0,0]; renderNoiseF=0;
   gl.deleteFramebuffer(acc.f); gl.deleteTexture(acc.t);
   return {frames,msPerFrame:(performance.now()-t0)/frames,gl:gl.getError(),sim:COAST.readState(LOCATIONS.indexOf(L))};
 }

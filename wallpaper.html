@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A live coast as your wallpaper</title>
+<style>
+  html,body{margin:0;background:#0a0d0f;color:#dfe8ea;font:16px/1.55 "Segoe UI",system-ui,-apple-system,sans-serif}
+  main{max-width:760px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:28px;font-weight:600;margin:0 0 6px}
+  h2{font-size:19px;font-weight:600;margin:30px 0 8px}
+  p{margin:8px 0}
+  .lead{color:#b9c8cc;font-size:17px}
+  a{color:#7cc7d6}
+  .box{background:#121a1d;border:1px solid #26343a;border-radius:8px;padding:14px 16px;margin:12px 0}
+  label{display:block;margin:6px 0}
+  select,input[type=text]{background:#1b2428;color:inherit;border:1px solid #33444b;border-radius:5px;padding:6px 8px;font:inherit}
+  input[type=text]{width:100%;box-sizing:border-box}
+  button,a.btn{display:inline-block;background:#2d6470;color:#fff;border:1px solid #58a3b2;border-radius:5px;padding:7px 14px;font:inherit;cursor:pointer;text-decoration:none;margin:8px 8px 0 0}
+  a.btn.quiet{background:#1b2428;border-color:#33444b;color:inherit}
+  ol{padding-left:22px}
+  li{margin:5px 0}
+  .note{color:#9fb0b6;font-size:14.5px}
+  #url{font-family:Consolas,Menlo,monospace;font-size:14px}
+</style>
+</head>
+<body>
+<main>
+  <h1>A live coast as your wallpaper</h1>
+  <p class="lead">This is a live simulation of the sea: waves, light and weather worked out as you watch, so it never
+    repeats. A free app can put it behind your desktop icons, like a window onto the coast.</p>
+
+  <h2>1. Choose what to show</h2>
+  <div class="box">
+    <label>Sea and sky
+      <select id="beach">
+        <option value="">A made-up sea, every time of day</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="slow" checked> Save power: 30 frames a second (looks the same for a calm scene)</label>
+    <label>Your link
+      <input type="text" id="url" readonly>
+    </label>
+    <button id="copy">Copy the link</button>
+    <a class="btn quiet" id="try" target="_blank">Try it in a new tab</a>
+    <p class="note">Following a real beach uses Open-Meteo's free forecast. Only the beach's coordinates are sent,
+      and the scene shows that beach's real swell, wind, cloud and time of day, not its real shape.</p>
+  </div>
+
+  <h2>2a. On a Mac: Plash (free)</h2>
+  <ol>
+    <li>Install <a href="https://apps.apple.com/app/plash/id1494023538">Plash</a> from the Mac App Store.</li>
+    <li>Open it. It lives in the menu bar, at the top right of the screen.</li>
+    <li>Choose <b>Add Website</b>, paste your link, and save.</li>
+  </ol>
+
+  <h2>2b. On Windows: Lively Wallpaper (free)</h2>
+  <ol>
+    <li>Install <a href="https://www.rocksdanister.com/lively/">Lively Wallpaper</a> (also in the Microsoft Store).</li>
+    <li>Click <b>+</b> (Add wallpaper), paste your link into the web address box, and confirm.</li>
+    <li>Choose it as your wallpaper.</li>
+  </ol>
+
+  <h2>Good to know</h2>
+  <ul>
+    <li><b>It needs recent graphics:</b> a Mac with an Apple chip, or a PC with Intel Arc, AMD Radeon 780M or better,
+      or any gaming graphics card. Older laptops may stutter.</li>
+    <li><b>Power:</b> on a recent mini PC it adds about 12 watts, about as much as a light bulb. On a laptop, use the
+      app's settings to pause the wallpaper on battery or while a full-screen app is open.</li>
+    <li><b>Sound</b> normally stays off in a wallpaper. To listen, open the link in a browser and press S.</li>
+    <li><b>Keys,</b> in a browser tab: C for calm mode, B to pick a beach, M for the menu.</li>
+  </ul>
+
+  <p><a class="btn quiet" href="index.html">Open the simulation</a></p>
+</main>
+<script>
+/* Builds the wallpaper link from the choices: calm mode always; a real beach to follow, if chosen; and 30
+   frames a second to save power. The link points at this site's own simulation page. */
+const BEACHES=[
+  ['Bondi Beach, Australia',-33.89,151.28,110],
+  ['Nazaré, Portugal',39.60,-9.08,285],
+  ['Malibu, California',34.03,-118.68,190],
+  ['Waikiki, Hawaii',21.27,-157.83,200],
+  ['Biarritz, France',43.48,-1.56,300],
+];
+const $=id=>document.getElementById(id);
+for(const [n,la,lo,f] of BEACHES){ const o=document.createElement('option'); o.value=[la,lo,f].join(','); o.textContent='Follow '+n+', live'; $('beach').append(o); }
+function build(){
+  const u=new URL('index.html',location.href); u.search=''; u.hash='';
+  u.searchParams.set('calm','1');
+  if($('beach').value) u.searchParams.set('live',$('beach').value);
+  if($('slow').checked) u.searchParams.set('fps','30');
+  const s=u.toString().replace(/%2C/g,',');
+  $('url').value=s; $('try').href=s;
+}
+$('beach').onchange=build; $('slow').onchange=build;
+$('copy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('url').value); $('copy').textContent='Copied'; }catch(e){ $('url').select(); document.execCommand('copy'); $('copy').textContent='Copied'; } setTimeout(()=>$('copy').textContent='Copy the link',1500); };
+build();
+</script>
+</body>
+</html>

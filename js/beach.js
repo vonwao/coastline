@@ -18,7 +18,11 @@ function beachSaved(){ try{ return JSON.parse(localStorage.getItem(BEACH_STORE)|
 /* At load, before the forecast is first asked for: follow the saved beach, unless told otherwise. */
 (function(){
   const b=beachSaved();
-  if(b&&!LIVE.on&&!Q.has('test')&&!Q.has('live')){ Object.assign(LIVE,{on:true,lat:b.lat,lon:b.lon,facing:b.facing??null}); LIVE.name=b.name; }
+  /* Not in the studio or for a recipe, a ready-made scene or a reel either: following a beach would change
+     their light and waves every 30 minutes. (A reel sets each movie's own sea and sky. With a beach saved
+     in this browser, a reel used to start with the forecast's swell in place of each coast's own, and with
+     the plants of the beach's region: vegOf in js/vegetation.js.) */
+  if(b&&!LIVE.on&&!Q.has('test')&&!Q.has('live')&&!Q.has('studio')&&!Q.has('recipe')&&!Q.has('preset')&&!Q.has('reel')){ Object.assign(LIVE,{on:true,lat:b.lat,lon:b.lon,facing:b.facing??null}); LIVE.name=b.name; }
 })();
 
 const BP=document.createElement('div');
@@ -45,6 +49,15 @@ function beachButton(b,label){
 /* Follow a beach (or stop), remember it, and move on to a new scene once the forecast is in. */
 async function beachGo(b){
   const fv=bp('bpFace').value;
+  /* While a reel plays, the choice is only remembered: it's followed the next time the page is opened
+     without a reel. Starting now would put the forecast's swell over the movie's and cut away from its shot. */
+  if(REEL_LIVE.on){
+    try{ if(b) localStorage.setItem(BEACH_STORE,JSON.stringify({name:b.name,lat:b.lat,lon:b.lon,facing:fv!==''?+fv:b.facing??null})); else localStorage.removeItem(BEACH_STORE); }catch(e){}
+    if(!b) liveStop();
+    toast(b?b.name+' is remembered for next time: a reel has its own sea and sky':'A made-up sea');
+    beachDraw();
+    return;
+  }
   if(b){
     /* A chosen direction wins; otherwise a listed beach's own, otherwise the swell's. */
     const facing=fv!==''?+fv:b.facing??null;
