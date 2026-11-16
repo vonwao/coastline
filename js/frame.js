@@ -275,7 +275,7 @@ function renderHDR(S,u){
     uSun:Li.sun,uSunE:Li.sunE,uSigA:W.sigA,uSigS:W.sigS,uSed:W.sed,uSandA:W.sandA,uSandB:W.sandB,uSandPatch:W.sandPatch,uType:L.type,uFlora:flora,uGreenD:greenD,uPlantCover:cover,uMixed:L.water?1:0,uRockAng:rockAngle(L),uGranite:L.form===5?1:0,uSnow:L.snow||0,uFarLod:L.farLod??4,uSlopeK:L.slopeK||1.6,uFarStep:L.farStep||.22,uFish:Q.has('nofish')||S.opt?.fish===false?0:L.fish??((L.kind==='tropical'||L.water==='tropical')?1:.35),
     uSwK:L.swK,uSwA:L.swA,uWA:fA,uWB:fB,uFogB:fogOf(S,Li),uCloudShade:Li.cloudShade,uSunVis:Li.sunVis??1,uCloudT:S.t||0,uCldCover:Li.cover??.4,uCldSeed:Li.seed??0,uDA:dA,uDB:dB,uCardD:cardD,uCardS:cardD>0?SHRUB_RANGE:0,uShrubM:[plantInfo[12],plantInfo[13],plantInfo[14],plantInfo[15]],
     tExtra:LABEL?L.s[0]:clouds?RT.cloud.t:Li.envC,uCloudPx:clouds?1:0,uLabel:LABEL,uStars:Li.stars||0,uMoonSun:Li.moonSun||[0,-1,0],uMoonLit:Li.moonLit||0,uMoonK:Li.moonK||0,...(LABEL?PEOPLE_OFF:peopleUniforms(S,cam)),...vegUniforms(),
-    tGA0:RT.g.a0,tGA1:RT.g.a1,tGB0:RT.g.b0,tGB1:RT.g.b1,tZ:RT.z.t,uConeK:4,uPre:PREMARCH&&!LABEL?1:0};
+    uFallA:L.fallU?L.fallU.A:[0,0,0,0],uFallB:L.fallU?L.fallU.B:[0,0,0,0],tGA0:RT.g.a0,tGA1:RT.g.a1,tGB0:RT.g.b0,tGB1:RT.g.b1,tZ:RT.z.t,uConeK:4,uPre:PREMARCH&&!LABEL?1:0};
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.ALWAYS); gl.depthMask(true);
   /* Answer images show the ground and water only: plants and spray are left out. */
   if(LABEL){ use(PR.label,U); drawTo(RT.hdrA.f); gl.disable(gl.DEPTH_TEST); return; }
@@ -388,6 +388,8 @@ const state={cur:null,next:null,upL:null,fade:0,fadeDur:0,shotT:0,paused:false,l
 /* A steady 30 looks better than a stuttering 45. Each shot gets the rate it can hold, 60 a second or an
    even 30, and the picture size that fits it (js/rhythm.js). ?fps=30 or ?fps=60 fixes the rate. */
 const FPS_FIX=+(Q.get('fps')||0);
+/* ?fall=1: only coasts with a waterfall, and only shots of it. */
+const FALL_ONLY=Q.has('fall');
 function capFor(S){ return FPS_FIX||S.rate||60; }
 /* ahead: the shot is being made early, on a coast already chosen (AHEAD above). Then nothing that can only
    happen once is done: the coast chosen ahead stays chosen, and favourites and playlists aren't touched. */
@@ -406,7 +408,13 @@ function chooseNext(prev,ahead){
   if(prev&&prev.kind===kind&&Math.random()<.6) kind=kind==='top'?'angled':'top';
   const lk=LIVE.on||LIVE.clock?LIVE.key:LIGHTS[FORCE_LIGHT]?FORCE_LIGHT:null;
   if(lk&&dimLight(lk)&&(kind==='top'||kind==='low'||kind==='crossing')) kind='angled';
-  const S=CALM?makeCalmShot(L,lk):makeShot(L,lk,kind);
+  /* A coast with a waterfall shows it in about a third of its shots (makeFallShot in js/camera.js), though
+     not in the dark, where white water on a shaded cliff can hardly be seen. ?fall=1 is for looking at the
+     fall: always a shot of it, in one of the coast's own daytime lights, whatever the clock or the weather
+     being followed says. (A first version kept to the followed light: opened at nine in the evening by a
+     browser following the clock, it showed no fall at all.) */
+  const F=L.fallU&&(FALL_ONLY||(Math.random()<.3&&!(lk&&dimLight(lk))))?makeFallShot(L,FALL_ONLY?pick(L.lights.filter(k=>k!=='storm')):lk,CALM):null;
+  const S=F||(CALM?makeCalmShot(L,lk):makeShot(L,lk,kind));
   /* (Made ahead, its light is baked when its plants are listed, or at the cut.) */
   if(!ahead) bakeLit(L,S.lightKey);
   return S;

@@ -122,10 +122,10 @@ const BOULDER_V=new URLSearchParams(location.search).get('boulders')==='1'?0:1;
 /* gentle: behind a running picture (coastBuild). Then the texture is drawn in thin strips, one a frame,
    each as tall as leaves the picture's frames nearly on time (the terrain shaders are slow: a sixteenth of
    a rocky coast at once held the picture for a fifth of a second). */
-async function bakeTerrain(tex,type,seed,min,size,near,tiles,form=0,half=0,gentle=null){
+async function bakeTerrain(tex,type,seed,min,size,near,tiles,form=0,half=0,gentle=null,fall=null){
   const f=makeFBO(tex);
   const TP=form>=3?PR.terrainMix:PR['terrain'+type];
-  const U={tNoise:noiseTex,uMin:min,uSize:size,uSeed:seed,uType:type,uForm:form,uHalf:half,uNear:near?1:0,uTexel:size[0]/tex.w,...(form>=3?{uBoulderV:BOULDER_V}:{})};
+  const U={tNoise:noiseTex,uMin:min,uSize:size,uSeed:seed,uType:type,uForm:form,uHalf:half,uNear:near?1:0,uTexel:size[0]/tex.w,uFall:fall?[fall.z,1,fall.x,0]:[0,0,0,0],...(form>=3?{uBoulderV:BOULDER_V}:{})};
   use(TP,U);
   gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.viewport(0,0,tex.w,tex.h);
   gl.enable(gl.SCISSOR_TEST);
@@ -182,7 +182,7 @@ function simUniforms(L){
   return {uDx:L.dx,uHmax:L.hmax,uTide:0,uT:L.t,uCells:[L.nx,L.nz],uDomMin:L.domMin,uSwK:L.swK,uSwA:L.swA,uSpongeN:44};
 }
 function setI2(P,name,v){ gl.useProgram(P.p); if(P.u[name]) gl.uniform2i(P.u[name].loc,v[0],v[1]); }
-function simVals(L,dt){ return {uRockEta:L.type===2?1:0,uBreakD:Math.max(L.Hs*1.35,.5),uDx:L.dx,uDt:dt,uHmax:L.hmax,uTide:0,uT:L.t,uDomMin:L.domMin,uSwK:L.swK,uSwA:L.swA,uSpongeN:44}; }
+function simVals(L,dt){ return {uFallFoot:L.fallU?L.fallU.foot:[0,0,0,0],uRockEta:L.type===2?1:0,uBreakD:Math.max(L.Hs*1.35,.5),uDx:L.dx,uDt:dt,uHmax:L.hmax,uTide:0,uT:L.t,uDomMin:L.domMin,uSwK:L.swK,uSwA:L.swA,uSpongeN:44}; }
 function simPass(P,extra,L,dt,target){
   use(P,Object.assign(simVals(L,dt),extra)); setI2(P,'uCells',[L.nx,L.nz]);
   // use() leaves the program bound; textures are bound by this point.
@@ -257,6 +257,24 @@ function readGrid(L){
   L.gw=gw;L.gh=gh;
   gl.deleteFramebuffer(f); gl.deleteTexture(t);
 }
+/* A coast's waterfall (fall in js/scenes.js): where its stream leaves the cliff top (the lip) and where it
+   lands (the foot), read from the baked land along the stream's line. The view draws the falling water
+   from these (fallAt in js/shaders/view.js); spray and foam are made at the foot (js/shaders/spray.js,
+   FS_FOAM in js/shaders/sim.js). */
+function fallMeasure(L){
+  L.fallU=null; const Fl=L.fall; if(!Fl) return;
+  const T=L.terr,f=makeFBO(T),row=Math.min(T.h-1,Math.max(0,Math.round((Fl.z-L.domMin[1])/L.domSize[1]*T.h)));
+  const a=new Float32Array(T.w*4); gl.readPixels(0,row,T.w,1,gl.RGBA,gl.FLOAT,a); gl.deleteFramebuffer(f);
+  const xOf=i=>L.domMin[0]+(i+.5)/T.w*L.domSize[0], H=i=>a[i*4], per=L.domSize[0]/T.w;
+  /* The foot: the first land met coming in from the sea. The top: the highest bed 45 to 90 m further in.
+     The lip: the first point going inland that is within 2.5 m of that height. */
+  let foot=-1; for(let i=T.w-1;i>0;i--) if(H(i)>.3){ foot=i; break; }
+  if(foot<0) return;
+  let top=0; for(let i=foot-Math.round(90/per);i<=foot-Math.round(45/per);i++) if(i>=0) top=Math.max(top,H(i));
+  let lip=foot; for(let i=foot;i>=0;i--) if(H(i)>=top-2.5){ lip=i; break; }
+  if(top<6) return;
+  L.fallU={A:[xOf(lip),H(lip),Fl.z,1],B:[xOf(foot),0,Fl.x,1],foot:[xOf(foot)+2.5,.3,Fl.z,1],drop:H(lip)};
+}
 function groundAt(L,x,z){
   const u=Math.min(Math.max((x-L.domMin[0])/L.domSize[0],0),.9999)*(L.gw-1), v=Math.min(Math.max((z-L.domMin[1])/L.domSize[1],0),.9999)*(L.gh-1);
   const i=Math.floor(u),j=Math.floor(v),a=u-i,b=v-j,G=L.grid,w=L.gw;
@@ -299,9 +317,9 @@ async function buildLocation(L,progress,gentle=null){
      a metre, and slopes came out as stairs, with saw-toothed ridges. Mountains get full floats. */
   L.terrF=makeTex(FAR_RES,FAR_RES,{mips:true,aniso:4,fmt:L.maxH>1000?'RGBA32F':'RGBA16F'});
   if(L.real){ await bakeRealTerrain(L,L.terr,true); progress(.25); await bakeRealTerrain(L,L.terrF,false); } else {
-  await bakeTerrain(L.terr,L.type,L.seed,L.domMin,L.domSize,true,4,L.form||0,L.domSize[1]*.5,gentle);
+  await bakeTerrain(L.terr,L.type,L.seed,L.domMin,L.domSize,true,4,L.form||0,L.domSize[1]*.5,gentle,L.fall);
   progress(.25); L.phase='far terrain';
-  await bakeTerrain(L.terrF,L.type,L.seed,[-FAR_SPAN*.5+L.domMin[0]+L.domSize[0]*.5,-FAR_SPAN*.5],[FAR_SPAN,FAR_SPAN],false,2,L.form||0,L.domSize[1]*.5,gentle);
+  await bakeTerrain(L.terrF,L.type,L.seed,[-FAR_SPAN*.5+L.domMin[0]+L.domSize[0]*.5,-FAR_SPAN*.5],[FAR_SPAN,FAR_SPAN],false,2,L.form||0,L.domSize[1]*.5,gentle,L.fall);
   }
   L.farMin=[-FAR_SPAN*.5+L.domMin[0]+L.domSize[0]*.5,-FAR_SPAN*.5];
   L.phase='textures';
@@ -309,6 +327,7 @@ async function buildLocation(L,progress,gentle=null){
      dozen textures) get a frame of their own. */
   if(soft()) await nextFrame();
   readGrid(L);
+  fallMeasure(L);
   if(soft()) await nextFrame();
   L.lit=makeTex(nearW,nearH,{fmt:'RGBA8'}); L.litF=makeFBO(L.lit);
   L.litFar=makeTex(512,512,{fmt:'RGBA8'}); L.litFF=makeFBO(L.litFar);
@@ -394,6 +413,7 @@ function coastShown(L){ L.shownAt=L.lastShown=performance.now(); }
 /* The coasts the slideshow may show now: in real-conditions mode only those that suit today's sea (any sea
    coast, but not the mountain lake, while the first forecast is awaited); playing favourites, theirs. */
 function coastEligible(){
+  if(Q.has('fall')){ const f=LOCATIONS.filter(L=>L.fall); if(f.length) return f; }
   if(state.favOnly){ const names=new Set(loadFavs().map(F=>F.loc)), f=LOCATIONS.filter(L=>names.has(L.name)); if(f.length) return f; }
   return LIVE.on?LOCATIONS.filter(L=>LIVE.locs?LIVE.locs.includes(L):L.form!==6):LOCATIONS;
 }

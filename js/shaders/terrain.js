@@ -106,6 +106,11 @@ float beachProf(float d,float y,float H,float Ls,float cuspA){
 }`;
 const FS_TERRAIN=HEAD+NOISE+BEACH_PATH_GLSL+`
 in vec2 vUV; layout(location=0) out vec4 o; uniform vec2 uMin,uSize; uniform float uSeed,uNear,uTexel,uHalf; uniform int uType,uForm;
+/* A coast's waterfall (fall in js/scenes.js; drawn by fallAt in js/shaders/view.js): where along the coast
+   its stream runs (x), whether there is one (y), and about where the cliff's lip is (z). The stream runs
+   straight out to sea near the cliff and wanders a little further inland; view.js has the same line. */
+uniform vec4 uFall;
+float fallZ(float x){ return uFall.x+5.*sin((x-uFall.z)*.05)*smoothstep(-20.,-80.,x-uFall.z); }
 `+FAR_BEND+`
 float fine(vec2 p,int o1,int o2){ return uNear>.5?fbm(p,o2):fbm(p,o1); }
 float bn(vec2 p){ return fbm(p,3); }
@@ -226,8 +231,16 @@ vec4 rockyRaw(vec2 p){
     h=.55+ledge*(1.-prof)+C*pow(prof,.82);
     h+=prof*prof*(4.*ridged(q/43.,uNear>.5?5:3));
     h+=smoothstep(-200.,-2200.,d)*96.*fbm(q/650.,5)+headHills(q,d,hk);
+    /* The stream's bed: a gully across the cliff top, deepest in a notch at the lip, and a shallow chute
+       down the face. Nothing grows in it. */
+    float fk=0.;
+    if(uFall.y>.5){
+      float fz=p.y-fallZ(p.x);
+      fk=exp(-fz*fz/mix(9.,30.,prof))*(1.-smoothstep(150.,260.,-d));
+      h-=fk*(1.3*(1.-prof)+2.4*prof+2.2*smoothstep(.5,1.,prof)*(1.-smoothstep(W,W+30.,-d)));
+    }
     float inl=smoothstep(W+5.,W+24.,-d+12.*(fbm(q/31.,3)-.5));
-    veg=inl*(.42+.92*fbm(q/23.,4));
+    veg=inl*(.42+.92*fbm(q/23.,4))*(1.-fk);
     h+=veg*(.3+.5*fbm(q/7.,3));
     float bs=smoothstep(.4,.8,cove)*smoothstep(-36.,-12.,d);
     if(bs>0.){ sand=bs; h=mix(h,1.5*(1.-exp(d/10.)),bs); }

@@ -132,7 +132,7 @@ void main(){
 }`;
 const FS_FOAM=HEAD+SIM_COMMON+`
 layout(location=0) out vec4 oF; layout(location=1) out vec4 oA;
-uniform sampler2D tFx,tAdv,tNoise; uniform vec2 uDomSize; uniform vec2 uReset; uniform float uDecay,uFoamGen,uSedGen,uTau;
+uniform sampler2D tFx,tAdv,tNoise; uniform vec2 uDomSize; uniform vec2 uReset; uniform float uDecay,uFoamGen,uSedGen,uTau; uniform vec4 uFallFoot;
 void main(){
   ivec2 c=ivec2(gl_FragCoord.xy);
   vec4 C=F(c),E=F(c+ivec2(1,0)),W=F(c-ivec2(1,0)),N=F(c+ivec2(0,1)),S=F(c-ivec2(0,1));
@@ -166,6 +166,10 @@ void main(){
   float impact=smoothstep(.25,1.9,dot(vel,gb)*(1.+.8*sp))*smoothstep(.01,.12,h)*smoothstep(.22,.75,length(gb));
   float impB=smoothstep(.40,.66,fineN+(patchN-.5)*.5);
   float gen=(brk*3.0+swash*1.9+impact*1.25*impB*(1.-smoothstep(uBreakD*1.5,uBreakD*4.,h)*.55))*(.55+.9*patchN)*uFoamGen;
+  /* Where a waterfall lands (fallMeasure in js/world.js) the sea is churned white, and the foam drifts off
+     with the water like any other. */
+  float fallK=0.;
+  if(uFallFoot.w>.5){ vec2 df=wp-uFallFoot.xz; fallK=exp(-dot(df,df)/26.)*smoothstep(.005,.08,h); gen+=fallK*2.6*(.6+.8*fineN); }
   float foam=f.r;
   foam*=exp(-clamp(div,-1.2,1.2)*uDt*.75);
   float dec=uDecay*(.6+1.2*fineN+.9*smoothstep(.55,.25,patchN));
@@ -173,7 +177,7 @@ void main(){
   dec+=h<.004?1.2:0.;
   dec+=(1.-smoothstep(.0,.05,h))*.45;
   foam=foam*exp(-dec*uDt)+gen*uDt;
-  float bub=f.g*exp(-.62*uDt)+(brk*1.5+impact*1.1+swash*.3)*uDt;
+  float bub=f.g*exp(-.62*uDt)+(brk*1.5+impact*1.1+swash*.3+fallK*1.6)*uDt;
   float wetTgt=smoothstep(.0012,.02,h);
   float wet=max(f.b-uDt/uTau,wetTgt);
   float sed=f.a*exp(-.042*uDt)+(brk*.5+smoothstep(.45,2.,sp)*(1.-smoothstep(.4,3.,h))*.34)*uDt*uSedGen;

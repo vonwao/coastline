@@ -1834,6 +1834,45 @@ vec3 foamShade(vec3 P,vec3 N,vec2 lit,float cs,float dens,float fp,vec2 dA,vec2 
 /* ------ What every stage of the view needs: the ray, the surface under it, the ground there ------ */
 /* The pictures the stages hand on to each other (see the stages below). */
 uniform sampler2D tGA0,tGA1,tGB0,tGB1;
+/* ---- A waterfall (fall in js/scenes.js; the land is cut for it in js/shaders/terrain.js, and
+   fallMeasure in js/world.js finds its lip and foot) ----
+   The land is one height for each spot, with no overhangs, so the water is drawn on the ground it runs
+   over: a stream across the cliff top, then white water down the face. uFallA: the lip's x and height, the
+   stream's place along the coast, on or off. uFallB: the foot's x and height, about where the lip is
+   (as terrain.js has it).
+   The white water is streaks of noise that travel with the flow. Along the stream they are placed by the
+   time the water takes to get there (a): upstream of the lip, the distance at walking pace; on the face,
+   the time a body sliding down has been falling, which grows with the square root of the drop. So the
+   streaks stretch as they speed up, as falling water does. The sheet widens and tears into strands on its
+   way down. Out: how much of the pixel is water, how white it is, and how wet the rock beside it. */
+uniform vec4 uFallA,uFallB;
+float fallZ(float x){ return uFallA.z+5.*sin((x-uFallB.z)*.05)*smoothstep(-20.,-80.,x-uFallB.z); }
+void fallAt(vec3 P,float fp,out float cov,out float white,out float wetK){
+  cov=0.; white=0.; wetK=0.;
+  if(uFallA.w<.5) return;
+  float up=uFallA.x-P.x;
+  if(up>250.||P.x>uFallB.x+8.) return;
+  float drop=max(uFallA.y-P.y,0.), face=smoothstep(.6,3.,drop);
+  float fz=P.z-fallZ(P.x)+1.1*sin(drop*.23+1.7)*smoothstep(4.,16.,drop);
+  float hw=1.3+1.1*face+.055*drop;
+  float x=abs(fz)/hw;
+  if(x>3.2) return;
+  float a=sqrt(drop/3.4)-max(up,0.)/1.7-uTime;
+  float lod=clamp(log2(max(fp,.002)/.012),0.,7.);
+  float n1=textureLod(tNoise,vec2(fz/2.6,a*.42),lod).r, n2=textureLod(tNoise,vec2(fz/.95+.37,a*1.05),lod+.5).g;
+  float n3=textureLod(tNoise,vec2(fz/7.,a*.16+.5),lod).b;
+  float strand=n1*.55+n2*.45;
+  float edge=1.-smoothstep(.5,1.,x+(n1-.5)*.6+(n3-.5)*.3);
+  /* A full sheet at the lip; lower down, gaps open where the strands thin. */
+  float full=1.-smoothstep(6.,42.,drop)*.75;
+  float veil=smoothstep(.22,.46,strand+.42*full);
+  cov=edge*mix(.92,veil,face)*smoothstep(250.,215.,up);
+  /* On top: dark, glassy water with soft white riffles, whitening as it nears the lip. On the face: white,
+     dimmer between the strands. */
+  float rif=textureLod(tNoise,vec2(fz/9.,a*.11),max(lod-1.5,0.)).r*.6+n3*.4;
+  white=mix(max(smoothstep(.6,.86,rif)*.5,smoothstep(9.,1.,up)*.85),.58+.42*smoothstep(.3,.72,strand),face);
+  wetK=(1.-smoothstep(.9,2.8,x+(n3-.5)*.5))*(.35+.65*face)*smoothstep(250.,215.,up);
+}
 /* The view ray through this pixel; pa is the angle one pixel covers. */
 vec3 viewRay(out float pa){ vec2 ndc=vUV*2.-1.+uJit; pa=2.*uTan/uResY; return normalize(uF+uR*ndc.x*uTan*uAspect+uU*ndc.y*uTan); }
 /* The depth-buffer value of a point t along the ray. */
@@ -2073,12 +2112,18 @@ void main(){
     vec3 sc=vec3(.82,.84,.88)*(.93+.1*nz(P.xz,9.,fp,3));
     alb=mix(alb,sc,snow); Nd=normalize(mix(Nd,N,snow*.7)); m.b*=1.-snow;
   }
+  /* A waterfall and its stream, on the ground they run over (fallAt above). */
+  float fCov,fWhite,fWet; fallAt(P,fp,fCov,fWhite,fWet);
+  if(fCov>0.){
+    alb=mix(alb,mix(vec3(.035,.06,.065),vec3(.95,.97,.99),fWhite),fCov);
+    Nd=normalize(mix(Nd,N+vec3(0.,.6,0.),fCov*.85)); m.b*=1.-fCov; sandness*=1.-fCov;
+  }
   float cSh=1.,cAO=1.,cTr=0.;
   if(m.b>.01) canopy(P.xz,rd,fp,m.b,alb,Nd,cSh,cAO,cTr);
   /* Towels, trodden sand and footprints, and the shadows of people and umbrellas (js/people.js). */
   if(uPeopleN>0.){ float pSh=1.; peopleGround(P,fp,sandness,uSun,alb,pSh); cSh*=pSh; }
   float wetBelt=(1.-smoothstep(.12,.72+.5*nz(P.xz,29.,fp,0),T-uTide))*sandness;
-  float wet=clamp(max(fx.b,wetBelt*.72),0.,1.);
+  float wet=clamp(max(max(fx.b,wetBelt*.72),max(fWet*.7,fCov*(1.-fWhite))),0.,1.);
   float wetS=wet*wet;
   vec3 al=alb*mix(1.,mix(.50,.72,m.g),wetS);
   /* Debris at the top of the swash line. */
