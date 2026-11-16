@@ -41,32 +41,133 @@ function plantList(S,force){
   for(let i=0;i<=8;i++){ const t=i/8; low=Math.min(low,S.p0[1]+(S.p1[1]-S.p0[1])*t-groundAt(L,S.p0[0]+(S.p1[0]-S.p0[0])*t,S.p0[2]+(S.p1[2]-S.p0[2])*t)); }
   if(!force&&low>MESH_TREE+10&&S.kind!=='crossing') return;
   if(!listTex){ listTex=makeTex(LIST_N,LIST_N,{fmt:'RGBA32F',filter:'nearest'}); listTex2=makeTex(LIST_N,LIST_N,{fmt:'RGBA32F',filter:'nearest'}); listFBO=makeFBO(listTex,listTex2); }
+  if(AHEAD.on) aheadGuard(S);
+  /* A plant's share of sun is read from the coast's baked light, which has to be this shot's. (A crossing
+     lists its plants while it is being made, before the frame loop has baked its light.) */
+  bakeLit(L,S.lightKey);
+  const blocks=CARD_LAYERS.map(C=>listBlock(S,C));
+  /* Read back now, which holds the page until the chip has caught up; or, for a shot prepared while the
+     one before it plays (AHEAD below), a few frames later without holding anything. */
+  const data=AHEAD.on?aheadList(S,blocks):blocks.map((B,i)=>{
+    listDraw(S,CARD_LAYERS[i],B);
+    const a0=new Float32Array(B.w*B.h*4),a1=new Float32Array(B.w*B.h*4);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0,0,B.w,B.h,gl.RGBA,gl.FLOAT,a0);
+    gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0,0,B.w,B.h,gl.RGBA,gl.FLOAT,a1);
+    return [a0,a1];
+  });
+  gl.readBuffer(gl.COLOR_ATTACHMENT0);
   const byModel=Array.from({length:PLANT.COUNT},()=>[]);
-  const a0=new Float32Array(LIST_N*LIST_N*4),a1=new Float32Array(LIST_N*LIST_N*4);
-  for(const C of CARD_LAYERS){
-    const D=C.shrub?MESH_SHRUB:MESH_TREE;
-    const a=C.tile*2.399,c=Math.cos(a),s=Math.sin(a),k=18/C.tile;
-    let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
-    for(const p of [S.p0,S.p1])for(const sx of [-1,1])for(const sz of [-1,1]){
-      const X=p[0]+sx*(D+6),Z=p[2]+sz*(D+6),u=(c*X-s*Z)*k,v=(s*X+c*Z)*k;
-      x0=Math.min(x0,u);x1=Math.max(x1,u);z0=Math.min(z0,v);z1=Math.max(z1,v);
-    }
-    const ox=Math.floor(x0),oz=Math.floor(z0),w=Math.min(Math.ceil(x1-x0)+1,LIST_N),h=Math.min(Math.ceil(z1-z0)+1,LIST_N);
-    use(PR.plantList,{uType:floraOf(S),uGreenD:greenK(S)-1,uPlantCover:coverOf(S),uShrub:C.shrub,TILE:C.tile,uEdge:.06,uDomMin:L.domMin,uDomSize:L.domSize,uFarMin:L.farMin,uFarSize:[FAR_SPAN,FAR_SPAN],tTerr:L.terr,tTerrF:L.terrF,tLit:L.lit,tLitF:L.litFar,tNoise:noiseTex,...vegUniforms()});
-    setI2(PR.plantList,'uOrigin',[ox,oz]);
-    gl.bindFramebuffer(gl.FRAMEBUFFER,listFBO); gl.viewport(0,0,LIST_N,LIST_N);
-    gl.enable(gl.SCISSOR_TEST); gl.scissor(0,0,w,h); gl.drawArrays(gl.TRIANGLES,0,3); gl.disable(gl.SCISSOR_TEST);
-    gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0,0,w,h,gl.RGBA,gl.FLOAT,a0);
-    gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0,0,w,h,gl.RGBA,gl.FLOAT,a1);
-    for(let i=0;i<w*h*4;i+=4){
+  blocks.forEach((B,j)=>{
+    const [a0,a1]=data[j];
+    for(let i=0;i<B.w*B.h*4;i+=4){
       if(a0[i+3]<=0) continue;
       const m=Math.floor(a0[i+3]);
       byModel[m].push(a0[i],a0[i+1],a0[i+2],a0[i+3],a1[i],a1[i+1],a1[i+2],a1[i+3]);
     }
-  }
-  gl.readBuffer(gl.COLOR_ATTACHMENT0);
+  });
   S.meshes=byModel.map(a=>new Float32Array(a));
   S.meshOut=byModel.map(a=>new Float32Array(a.length));
+}
+/* The block of a layer's plant cells that a shot's path comes near. */
+function listBlock(S,C){
+  const D=C.shrub?MESH_SHRUB:MESH_TREE;
+  const a=C.tile*2.399,c=Math.cos(a),s=Math.sin(a),k=18/C.tile;
+  let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+  for(const p of [S.p0,S.p1])for(const sx of [-1,1])for(const sz of [-1,1]){
+    const X=p[0]+sx*(D+6),Z=p[2]+sz*(D+6),u=(c*X-s*Z)*k,v=(s*X+c*Z)*k;
+    x0=Math.min(x0,u);x1=Math.max(x1,u);z0=Math.min(z0,v);z1=Math.max(z1,v);
+  }
+  return {ox:Math.floor(x0),oz:Math.floor(z0),w:Math.min(Math.ceil(x1-x0)+1,LIST_N),h:Math.min(Math.ceil(z1-z0)+1,LIST_N)};
+}
+/* Draw that block into the list texture: one texel per cell, the plant in it or nothing. */
+function listDraw(S,C,B){
+  const L=S.L;
+  use(PR.plantList,{uType:floraOf(S),uGreenD:greenK(S)-1,uPlantCover:coverOf(S),uShrub:C.shrub,TILE:C.tile,uEdge:.06,uDomMin:L.domMin,uDomSize:L.domSize,uFarMin:L.farMin,uFarSize:[FAR_SPAN,FAR_SPAN],tTerr:L.terr,tTerrF:L.terrF,tLit:L.lit,tLitF:L.litFar,tNoise:noiseTex,...vegUniforms()});
+  setI2(PR.plantList,'uOrigin',[B.ox,B.oz]);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,listFBO); gl.viewport(0,0,LIST_N,LIST_N);
+  gl.enable(gl.SCISSOR_TEST); gl.scissor(0,0,B.w,B.h); gl.drawArrays(gl.TRIANGLES,0,3); gl.disable(gl.SCISSOR_TEST);
+}
+/* ---- The next shot, prepared while this one plays ----
+   Making a shot can need the list of plants near its path (above), and a crossing needs it up to ten
+   times, once for each path it tries. Read back at once, each list held the page until the chip had
+   finished everything queued: 55 to 380 ms with the picture standing still at every change of scene
+   (measured 15 November 2026, TECHLOG 67).
+
+   So the slideshow chooses its next shot a moment after the present one begins, and the lists are read
+   back without waiting: the chip is asked, and the answer collected a few frames later. The code that makes
+   shots is unchanged and still asks for a list and uses it at once. When the answer isn't there yet, the
+   attempt is dropped (AHEAD_WAIT) and, once it has arrived, made again from the same random numbers, so
+   it asks for the same list, now there, and gets a step further. A shot takes one to a dozen such rounds,
+   all long before it is needed. Anything else (the first shot, N, favourites, a playlist, a reel, the
+   studio) makes its shot on the spot as before. ?noahead switches this off. */
+const AHEAD={on:false,for:null,L:null,S:null,fail:null,seed:0,tries:0,calm:false,cache:new Map(),pend:null,pbo:null};
+const AHEAD_WAIT={}, AHEAD_NO={};
+function aheadMay(cur){ return RH.on&&!Q.has('noahead')&&!REEL_LIVE.on&&!state.next&&!state.paused&&!holdScene()&&!state.favOnly&&!PLAYLIST.on&&!cur.flying&&!cur.hold; }
+function aheadDrop(){
+  const A=AHEAD; if(A.pend){ gl.deleteSync(A.pend.sync); A.pend=null; }
+  A.for=null; A.L=null; A.S=null; A.fail=null; A.tries=0; A.cache.clear();
+}
+/* The same coast in another light can't be prepared while it is on screen: its baked light is in use. */
+function aheadGuard(S){ const c=state.cur; if(c&&S.L===c.L&&(S.lightKey!==c.lightKey||LIGHTS[S.lightKey]!==c.L.litObj)) throw AHEAD_NO; }
+function aheadList(S,blocks){
+  const A=AHEAD;
+  const keys=blocks.map((B,i)=>[S.L.name,S.lightKey,vegOf(S),floraOf(S),greenK(S),coverOf(S),i,B.ox,B.oz,B.w,B.h].join('|'));
+  if(keys.every(k=>A.cache.has(k))) return keys.map(k=>A.cache.get(k));
+  if(!A.pend){
+    if(!A.pbo) A.pbo=[0,1,2,3].map(()=>{ const b=gl.createBuffer(); gl.bindBuffer(gl.PIXEL_PACK_BUFFER,b); gl.bufferData(gl.PIXEL_PACK_BUFFER,LIST_N*LIST_N*16,gl.STREAM_READ); return b; });
+    blocks.forEach((B,i)=>{
+      listDraw(S,CARD_LAYERS[i],B);
+      for(const j of [0,1]){ gl.readBuffer(j?gl.COLOR_ATTACHMENT1:gl.COLOR_ATTACHMENT0); gl.bindBuffer(gl.PIXEL_PACK_BUFFER,A.pbo[i*2+j]); gl.readPixels(0,0,B.w,B.h,gl.RGBA,gl.FLOAT,0); }
+    });
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER,null); gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    A.pend={sync:gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE,0),keys,blocks}; gl.flush();
+  }
+  throw AHEAD_WAIT;
+}
+/* Has the chip answered? Then keep what it sent. */
+function aheadPoll(){
+  const A=AHEAD,P=A.pend; if(!P) return true;
+  const st=gl.clientWaitSync(P.sync,0,0);
+  if(st===gl.TIMEOUT_EXPIRED) return false;
+  gl.deleteSync(P.sync); A.pend=null;
+  if(st===gl.WAIT_FAILED) return true;
+  P.blocks.forEach((B,i)=>A.cache.set(P.keys[i],[0,1].map(j=>{ const a=new Float32Array(B.w*B.h*4); gl.bindBuffer(gl.PIXEL_PACK_BUFFER,A.pbo[i*2+j]); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER,0,a); return a; })));
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER,null);
+  return true;
+}
+/* Every frame of the slideshow: one more round of making the next shot, if it isn't made yet. */
+function aheadTick(cur){
+  const A=AHEAD;
+  if(A.for&&A.for!==cur) aheadDrop();
+  if(!aheadMay(cur)){ if(A.for) aheadDrop(); return; }
+  if(A.S||A.fail===cur) return;
+  if(A.pend&&!aheadPoll()) return;
+  if(A.for!==cur){
+    if(cur.t<1.2) return;
+    /* Its coast: the one chosen ahead where coasts are built as needed (state.upL), else chosen now. */
+    const L=COASTS.auto?state.upL:coastNext(cur); if(!L||!L.ready) return;
+    A.for=cur; A.L=L; A.seed=(Math.random()*4294967296)>>>0; A.tries=0; A.calm=CALM; A.cache.clear();
+  }
+  if(!A.L.ready){ A.fail=cur; return; }
+  if(!vegReady({L:A.L})){ vegEnsure({L:A.L}); return; }
+  /* The same random numbers each round (mulberry32), so each round makes the same choices as the last. */
+  const rand=Math.random; let s=A.seed;
+  Math.random=()=>{ s=(s+0x6D2B79F5)|0; let t=Math.imul(s^(s>>>15),1|s); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; };
+  A.on=true;
+  try{ const S=chooseNext(cur,A); vegUse(S); if(S.meshes===undefined) plantList(S); S.vegMade=vegOf(S); A.S=S; }
+  catch(e){
+    if(e===AHEAD_WAIT){ if(++A.tries>16) A.fail=cur; }
+    else { A.fail=cur; if(e!==AHEAD_NO) console.warn('[ahead] the next shot could not be prepared: '+(e&&e.message)); }
+  }
+  finally { Math.random=rand; A.on=false; vegUse(cur); }
+  if(A.fail===cur&&A.pend){ gl.deleteSync(A.pend.sync); A.pend=null; }
+}
+/* Still being made, with an answer on its way? Then the change of scene can wait a moment for it. */
+function aheadBusy(cur){ const A=AHEAD; return A.for===cur&&!A.S&&A.fail!==cur&&(!!A.pend||A.tries>0); }
+/* The prepared shot, if it still suits; nothing is kept either way. */
+function aheadTake(cur){
+  const A=AHEAD, S=A.S&&A.for===cur&&A.calm===CALM&&A.L.ready&&!state.favOnly&&!PLAYLIST.on&&coastEligible().includes(A.L)?A.S:null;
+  aheadDrop(); return S;
 }
 function drawMeshes(S,cam,asp,Li,dA,dB){
   const L=S.L;
@@ -140,6 +241,9 @@ function rockAngle(L){ const f=L.form||0; return (f>=3?.5:f===2?.82:.34)+L.seed*
 /* The mixed-coast forms (3 and up) all use the same bed direction. */
 /* 0 draws the picture; 1 and 2 draw answer images for training data instead (see tools/groundtruth.js). */
 let LABEL=0;
+/* The march's quarter-size first pass (FS_VIEW_Z in js/shaders/view.js). Tools and films (?test) draw as
+   before, without it, unless ?pre asks for it; ?nopre switches it off in the live window, to compare. */
+let PREMARCH=Q.has('pre')||(!TEST&&!Q.has('nopre'));
 function renderHDR(S,u){
   /* A tool drawing a shot whose plants aren't baked yet (js/vegetation.js): bake them now. */
   if(TEST&&typeof vegBakeNow==='function'&&!vegReady(S)) vegBakeNow(S);
@@ -171,13 +275,14 @@ function renderHDR(S,u){
     uSun:Li.sun,uSunE:Li.sunE,uSigA:W.sigA,uSigS:W.sigS,uSed:W.sed,uSandA:W.sandA,uSandB:W.sandB,uSandPatch:W.sandPatch,uType:L.type,uFlora:flora,uGreenD:greenD,uPlantCover:cover,uMixed:L.water?1:0,uRockAng:rockAngle(L),uGranite:L.form===5?1:0,uSnow:L.snow||0,uFarLod:L.farLod??4,uSlopeK:L.slopeK||1.6,uFarStep:L.farStep||.22,uFish:Q.has('nofish')||S.opt?.fish===false?0:L.fish??((L.kind==='tropical'||L.water==='tropical')?1:.35),
     uSwK:L.swK,uSwA:L.swA,uWA:fA,uWB:fB,uFogB:fogOf(S,Li),uCloudShade:Li.cloudShade,uSunVis:Li.sunVis??1,uCloudT:S.t||0,uCldCover:Li.cover??.4,uCldSeed:Li.seed??0,uDA:dA,uDB:dB,uCardD:cardD,uCardS:cardD>0?SHRUB_RANGE:0,uShrubM:[plantInfo[12],plantInfo[13],plantInfo[14],plantInfo[15]],
     tExtra:LABEL?L.s[0]:clouds?RT.cloud.t:Li.envC,uCloudPx:clouds?1:0,uLabel:LABEL,uStars:Li.stars||0,uMoonSun:Li.moonSun||[0,-1,0],uMoonLit:Li.moonLit||0,uMoonK:Li.moonK||0,...(LABEL?PEOPLE_OFF:peopleUniforms(S,cam)),...vegUniforms(),
-    tGA0:RT.g.a0,tGA1:RT.g.a1,tGB0:RT.g.b0,tGB1:RT.g.b1};
+    tGA0:RT.g.a0,tGA1:RT.g.a1,tGB0:RT.g.b0,tGB1:RT.g.b1,tZ:RT.z.t,uConeK:4,uPre:PREMARCH&&!LABEL?1:0};
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.ALWAYS); gl.depthMask(true);
   /* Answer images show the ground and water only: plants and spray are left out. */
   if(LABEL){ use(PR.label,U); drawTo(RT.hdrA.f); gl.disable(gl.DEPTH_TEST); return; }
   /* The view, in four stages (js/shaders/view.js, at its end): A finds the surface and starts the ground,
      B adds driftwood, ripples and rock, C lights the ground and draws the sky, W lays the water, foam and
      haze over it. A and B write the depth buffer; all are given the same values (each uses what it needs). */
+  if(PREMARCH){ gl.disable(gl.DEPTH_TEST); use(PR.viewZ,U); drawTo(RT.z.f,RT.z.w,RT.z.h); gl.enable(gl.DEPTH_TEST); }
   use(PR.viewA,U); drawTo(RT.g.a);
   use(PR.viewB,U); drawTo(RT.g.b);
   gl.disable(gl.DEPTH_TEST);
@@ -278,50 +383,38 @@ function toggleCalm(){
   if(CALM&&state.cur&&!state.next&&!REEL_LIVE.on) cutTo(chooseNext(state.cur),rnd(3,4));
 }
 /* upL: the coast the next shot will show, chosen as a shot begins so its plants can be prepared (frame). */
-const state={cur:null,next:null,upL:null,fade:0,fadeDur:0,shotT:0,paused:false,last:0,scale:+(Q.get('res')||.8),fps:60,frames:0,accum:0,dtAvg:16.7,ceil:1,cooldown:0,capBy:{},strikes:{}};
-/* A steady 30 looks better than a stuttering 45. Each kind of shot gets 60 if it can hold it,
-   otherwise an even 30. ?fps=30 or ?fps=60 fixes the rate. */
+/* capBy: the coasts and kinds of shot running below 60 a second just now, for the checks' readout. */
+const state={cur:null,next:null,upL:null,fade:0,fadeDur:0,shotT:0,paused:false,last:0,scale:+(Q.get('res')||.8),fps:60,frames:0,accum:0,dtAvg:16.7,capBy:{}};
+/* A steady 30 looks better than a stuttering 45. Each shot gets the rate it can hold, 60 a second or an
+   even 30, and the picture size that fits it (js/rhythm.js). ?fps=30 or ?fps=60 fixes the rate. */
 const FPS_FIX=+(Q.get('fps')||0);
-function capKey(S){ return S.L.name+'|'+S.kind; }
-function capFor(S){ return FPS_FIX||state.capBy[capKey(S)]||60; }
-function chooseNext(prev){
+function capFor(S){ return FPS_FIX||S.rate||60; }
+/* ahead: the shot is being made early, on a coast already chosen (AHEAD above). Then nothing that can only
+   happen once is done: the coast chosen ahead stays chosen, and favourites and playlists aren't touched. */
+function chooseNext(prev,ahead){
   liveUpdate(); liveSky();
   /* In real-conditions mode, only coasts that suit today's sea, in today's light. */
   /* Still waiting for the first forecast (offline, say): any sea coast, but not the mountain lake. */
   /* The coast was chosen ahead if the slideshow is running (state.upL); else it is chosen now (world.js). */
-  const up=state.upL; state.upL=null;
-  const L=up&&up.ready&&(!prev||up!==prev.L)&&coastEligible().includes(up)?up:coastNext(prev);
-  if(state.favOnly){ const S=nextFav(prev); if(S){ bakeLit(S.L,S.lightKey); return S; } }
+  const up=state.upL; if(!ahead) state.upL=null;
+  const L=ahead?ahead.L:up&&up.ready&&(!prev||up!==prev.L)&&coastEligible().includes(up)?up:coastNext(prev);
+  if(!ahead&&state.favOnly){ const S=nextFav(prev); if(S){ bakeLit(S.L,S.lightKey); return S; } }
   /* The studio's playlist of recipes, when it's playing (js/recipe.js). */
-  { const S=recipeNext(prev); if(S){ bakeLit(S.L,S.lightKey); return S; } }
+  if(!ahead){ const S=recipeNext(prev); if(S){ bakeLit(S.L,S.lightKey); return S; } }
   const r=Math.random();
   let kind=r<.32?'top':r<.45?'low':r<.53?'canopy':r<.62?'crossing':'angled';
   if(prev&&prev.kind===kind&&Math.random()<.6) kind=kind==='top'?'angled':'top';
   const lk=LIVE.on||LIVE.clock?LIVE.key:LIGHTS[FORCE_LIGHT]?FORCE_LIGHT:null;
   if(lk&&dimLight(lk)&&(kind==='top'||kind==='low'||kind==='crossing')) kind='angled';
   const S=CALM?makeCalmShot(L,lk):makeShot(L,lk,kind);
-  bakeLit(L,S.lightKey);
+  /* (Made ahead, its light is baked when its plants are listed, or at the cut.) */
+  if(!ahead) bakeLit(L,S.lightKey);
   return S;
 }
 function applyScale(){
   resizeCanvas();
   const w=Math.max(320,Math.round(canvas.width*state.scale/2)*2),h=Math.max(180,Math.round(canvas.height*state.scale/2)*2);
   allocRT(w,h);
-}
-function adaptAtCut(){
-  /* Change frame rate and resolution only at a cut, when it can't be seen. */
-  const d=state.dtAvg,S=state.cur; if(!S) return;
-  const cap=capFor(S);
-  if(cap===60){
-    /* A shot that misses 60 twice runs at an even 30 from then on. One stall doesn't count. */
-    if(!FPS_FIX&&d>21){ const k=capKey(S); state.strikes[k]=(state.strikes[k]||0)+1; if(state.strikes[k]>=2) state.capBy[k]=30; }
-  }
-  if(Q.has('res')) return;
-  /* Resolution falls only if a shot can't hold 30, and comes back as soon as there's room. */
-  let s=state.scale;
-  if(d>38){ state.ceil=Math.min(state.ceil,s); s=Math.max(.66,s*Math.max(.85,Math.sqrt(36/d))); state.cooldown=4; }
-  else if(d<36){ if(state.cooldown>0) state.cooldown--; else if(s<1){ s=Math.min(1,s+.07); state.ceil=Math.min(1,Math.max(state.ceil,s)); state.cooldown=1; } }
-  if(Math.abs(s-state.scale)>.01){ state.scale=s; applyScale(); }
 }
 /* ---- Favourites: the place, light and camera path of a shot, kept in this browser. The waves
    themselves are always new, so a favourite shows the same shot of a different moment. ---- */
@@ -377,26 +470,33 @@ const history=[];
 function goBack(){
   if(!history.length){ toast('No earlier scenes yet'); return; }
   const S=history.pop();
-  const show=()=>{ liveFix(S); bakeLit(S.L,S.lightKey); state.next=null; state.upL=null; S.t=0; state.cur=S; coastShown(S.L); state.dtAvg=1000/capFor(S); };
+  const show=()=>{ liveFix(S); bakeLit(S.L,S.lightKey); aheadDrop(); rhythmLearn(state.cur); rhythmCut(S,true); state.next=null; state.upL=null; S.t=0; state.cur=S; coastShown(S.L); state.dtAvg=1000/capFor(S); };
   /* Its coast may have been put away since (world.js): it is built again first, as it was. */
   if(!S.L.ready){ toast('Bringing that coast back'); coastBuild(S.L,false).then(show,()=>toast('That coast could not be brought back')); }
   else show();
 }
-function cutTo(S,fadeDur){
+/* resize: a dissolve that may change the picture's size as it begins (calm mode and reels, which have no
+   hard cuts to hide the change behind). A hard cut always may. */
+function cutTo(S,fadeDur,resize){
   if(state.cur){ history.push(state.cur); if(history.length>30) history.shift(); }
+  aheadDrop();
   /* Off screen until now, or a hard cut: the coast's clock can be wound back unseen (world.js). */
   if(!fadeDur||(S.L!==state.cur?.L&&S.L!==state.next?.L)) timeRebase(S.L);
   S.start=0; S.t=0; coastShown(S.L); state.upL=null;
-  if(fadeDur>0){ state.next=S; state.fadeDur=fadeDur; state.fade=0; }
-  else { adaptAtCut(); state.cur=S; state.next=null; state.dtAvg=1000/capFor(S); }
+  /* The rate the shot can hold and the picture size that fits it (js/rhythm.js). */
+  if(fadeDur>0){ rhythmCut(S,!!resize,state.cur); state.next=S; state.fadeDur=fadeDur; state.fade=0; }
+  else { rhythmLearn(state.cur); rhythmCut(S,true); state.cur=S; state.next=null; state.dtAvg=1000/capFor(S); }
 }
 function frame(now){
   requestAnimationFrame(frame);
-  /* The small allowance keeps a 60 Hz display on an even every-second-refresh rhythm. */
-  if(state.cur&&capFor(state.cur)<45&&now-state.last<29) return;
+  /* 30 a second is every second refresh of a 60 Hz display, 20 every third; the small allowance keeps
+     that rhythm even. */
+  const cap=state.cur?capFor(state.cur):60;
+  if(cap<45&&now-state.last<(cap<25?46:29)) return;
   const elapsed=Math.min((now-state.last)/1000,.25); state.last=now;
   if(elapsed>0&&elapsed<.25) state.dtAvg+=(elapsed*1000-state.dtAvg)*.06;
   if(state.paused) { return; }
+  rhythmBegin(now);
   simTime+=elapsed;
   stepFFT(simTime);
   flyUpdate(elapsed);
@@ -420,6 +520,8 @@ function frame(now){
     if(!state.upL&&cur.t>1&&!holdScene()){ const L=coastNext(cur); if(L!==cur.L) state.upL=L; }
     if(state.upL&&vegReady(cur)) vegEnsure({L:state.upL});
   }
+  /* And the next shot itself is made while this one plays (AHEAD above). */
+  if(!TEST) aheadTick(cur);
   const vegHold=!vegReady(cur);
   if((!state.next||odd||state.fade===0)&&!vegHold){ const s=taaBegin(cur); renderView(cur,Math.min(cur.t/cur.dur,1.2),RT.ldrA.f); taaResolve(s,cur,RT.ldrA); }
   let finalTex=shotTex(cur,RT.ldrA);
@@ -434,7 +536,12 @@ function frame(now){
     const k=Math.min(state.fade,1), ks=k*k*(3-2*k);
     use(PR.mix,{tA:finalTex,tB:shotTex(nx,RT.ldrB),uK:ks}); drawTo(RT.ldrM.f);
     finalTex=RT.ldrM.t;
-    if(state.fade>=1){ state.cur=nx; state.next=null; state.dtAvg=1000/capFor(nx); }
+    if(state.fade>=1){
+      rhythmLearn(cur); state.cur=nx; state.next=null; state.dtAvg=1000/capFor(nx);
+      /* The size was held down for the shot that has just left: now it can go up, if by enough to be worth
+         the moment it takes. Only where shots are long (calm mode, reels). */
+      if(nx.rhGrow){ nx.rhGrow=false; const t=nx.t; rhythmCut(nx,true); nx.t=t; }
+    }
   }
   use(PR.final,{tI:finalTex,uTx:[1/RT.w,1/RT.h],uTime:simTime%FFT_P,uSharp:state.scale<.99?.34:.2,uNoFxaa:TAA_ON?1:0}); drawTo(null,canvas.width,canvas.height);
   soundUpdate(state.next&&state.fade>.5?state.next:state.cur);
@@ -442,18 +549,21 @@ function frame(now){
   /* The studio, or one recipe (?recipe=): the shot loops instead of changing. */
   /* The camera jumps back to its start there, so the coast's clock can be wound back unseen too: a screen
      left on one scene for days would otherwise lose the fine detail of its waves to rounding. */
-  if(!TEST&&!REEL_LIVE.on&&!state.next&&state.cur.t>=state.cur.dur&&holdScene()){ state.cur.t=0; timeRebase(state.cur.L); }
-  if(!TEST&&!REEL_LIVE.on&&!state.next&&state.cur.t>=state.cur.dur){
-    const S=chooseNext(state.cur);
+  if(!TEST&&!REEL_LIVE.on&&!state.next&&state.cur.t>=state.cur.dur&&holdScene()){ const c=state.cur; rhythmLearn(c); rhythmCut(c,true); c.t=0; timeRebase(c.L); }
+  /* The next shot is usually made already (AHEAD); if its last answer is still on its way, the change
+     waits for it, up to half a second. */
+  if(!TEST&&!REEL_LIVE.on&&!state.next&&state.cur.t>=state.cur.dur&&!(aheadBusy(state.cur)&&state.cur.t<state.cur.dur+.5)){
+    const S=aheadTake(state.cur)||chooseNext(state.cur);
     /* Calm mode only dissolves, slowly. With no hard cuts to hide behind, frame rate and resolution are
-       adjusted as each dissolve begins. */
-    if(CALM){ adaptAtCut(); cutTo(S,rnd(4.5,7)); }
-    else { const dissolve=Math.random()<.24; cutTo(S,dissolve?rnd(1.1,1.7):0); }
+       adjusted as each dissolve begins. Otherwise a shot that needs a smaller picture comes in on a cut. */
+    if(CALM) cutTo(S,rnd(4.5,7),true);
+    else { const dissolve=Math.random()<.24&&rhythmFits(S); cutTo(S,dissolve?rnd(1.1,1.7):0); }
   }
+  rhythmEnd();
   state.frames++;
   if(hud.style.display==='block'&&state.frames%15===0){
     const c=state.cur;
-    hud.textContent=`${c.favId?'♥ ':''}${c.L.name} · ${c.kind} · ${LIGHTS[c.lightKey].label||c.lightKey}\n${(1000/state.dtAvg).toFixed(0)} fps · render ${RT.w}x${RT.h} (${(state.scale*100).toFixed(0)}%)\nsim ${c.L.nx}x${c.L.nz} @ ${c.L.dx} m · t=${c.L.t.toFixed(1)}s`;
+    hud.textContent=`${c.favId?'♥ ':''}${c.L.name} · ${c.kind} · ${LIGHTS[c.lightKey].label||c.lightKey}\n${(1000/state.dtAvg).toFixed(0)} fps${rhythmText(c)} · render ${RT.w}x${RT.h} (${(state.scale*100).toFixed(0)}%)\nsim ${c.L.nx}x${c.L.nz} @ ${c.L.dx} m · t=${c.L.t.toFixed(1)}s`;
   }
 }
 /* A screen left running: if no frame has been drawn for 20 s while the page is showing (the graphics
@@ -477,7 +587,7 @@ addEventListener('keydown',e=>{
   if(k==='g'){ toggleFly(); return; }
   if(k==='f'){ if(document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
   else if(k===' '){ state.paused=!state.paused; e.preventDefault(); }
-  else if(k==='n'||e.key==='ArrowRight'){ if(state.cur&&!state.next) cutTo(chooseNext(state.cur),0); }
+  else if(k==='n'||e.key==='ArrowRight'){ if(state.cur&&!state.next) cutTo(aheadTake(state.cur)||chooseNext(state.cur),0); }
   else if(e.key==='ArrowLeft'){ if(state.cur) goBack(); }
   else if(k==='l'){ if(state.cur) toggleFav(); }
   else if(k==='p'){

@@ -488,7 +488,7 @@ function reelTick(dt){
     state.next=null; cutTo(reelGo(P.shots[0]),0);
   } else {
     const sp=reelShotAt(P,Rl.T);
-    if(sp!==Rl.sp&&!state.next){ const S=reelGo(sp); if(sp.fadeIn>0){ adaptAtCut(); cutTo(S,sp.fadeIn); } else cutTo(S,0); }
+    if(sp!==Rl.sp&&!state.next){ const S=reelGo(sp); if(sp.fadeIn>0) cutTo(S,sp.fadeIn,true); else cutTo(S,0); }
   }
   for(const S of [state.cur,state.next]) if(S&&S.reelM!==undefined) reelLiveLight(S.reelM);
   reelFxDraw();

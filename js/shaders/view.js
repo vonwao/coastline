@@ -201,9 +201,21 @@ vec2 litAt(vec2 p){
   if(w<=0.) return f;
   return mix(f,textureLod(tLit,uv,0.).rg,w);
 }
+/* The march finds where a view ray meets the ground or the water. It is the dearest single step of a frame:
+   50 to 120 samples of the height maps for every pixel, most of them through empty air.
+   So it is done twice (TECHLOG 67). First for one pixel in sixteen (FS_VIEW_Z, a quarter of the size each
+   way), stopping not at the surface but as soon as the ray comes within a few pixels' width of it (gCone:
+   the ray is treated as a cone as wide as its block of pixels, and the ground a little to each side is
+   looked at too), and giving the last point before that. Then for every pixel, starting from the nearest
+   such point of the four blocks around it (gT0) instead of from the camera, with the same steps from there
+   on. Every pixel still finds its own surface; only the empty air before it is skipped.
+   Measured 15 November 2026: 8 to 26 samples a pixel instead of 38 to 121, the march 35 to 55% cheaper on
+   shots along the coast, and no further from a march with eight times the steps than before. */
+float gT0=-1.,gCone=0.;
+uniform sampler2D tZ; uniform float uConeK,uPre;
 float march(vec3 ro,vec3 rd){
   bool up=rd.y>-1.5e-4;
-  if(up&&ro.y>=uMaxH) return -1.;
+  if(up&&ro.y>=uMaxH) return gCone>0.?1e9:-1.;
   float lo=-2.6-uSwH;
   float hd=max(length(rd.xz),.01);
   float t0,t1;
@@ -214,9 +226,11 @@ float march(vec3 ro,vec3 rd){
     t0=ro.y>uNearH?min((uNearH-ro.y)/rd.y,max(380./hd,(uMaxH>ro.y?1.:(uMaxH-ro.y)/rd.y))):.5;
     t1=min((lo-ro.y)/rd.y,42000.);
   }
-  if(t1<=t0) return up?-1.:t1;
+  if(t1<=t0) return gCone>0.?1e9:(up?-1.:t1);
   float r=t1/t0; float tp=t0; float dp=(ro+rd*t0).y-surfH((ro+rd*t0).xz);
   if(dp<0.) return t0;
+  /* Start where the first pass says nothing lies before (if that point is above the surface, as it should be). */
+  if(gT0>t0){ if(gT0>=t1) return up?-1.:t1; float d2=(ro+rd*gT0).y-surfH((ro+rd*gT0).xz); if(d2>=0.){ tp=gT0; dp=d2; } }
   int stepsN=uSteps+int(float(uSteps)*1.3*(1.-smoothstep(.0,.07,abs(rd.y))));
   float n=float(stepsN);
   /* uNoiseF moves this screen noise on each frame when frames are averaged (live smoothing, or several
@@ -248,6 +262,9 @@ float march(vec3 ro,vec3 rd){
        point the shading then finds inside the mountain, and ridges came out smeared and saw-toothed. */
     gFarLod=clamp(log2(max(t-tp,1.)/16.6)+.5,0.,uFarLod);
     vec3 p=ro+rd*t; float d=p.y-surfH(p.xz);
+    /* The first pass: within the cone's radius of the surface here, or of the ground half a block to
+       either side? Then every pixel of the block starts from the point before. */
+    if(gCone>0.){ float rr=t*gCone; vec2 sd=vec2(rd.z,-rd.x)/hd*rr*.5; d=min(d,min(p.y-terrH(p.xz+sd),p.y-terrH(p.xz-sd))); if(d<rr){ gFarLod=0.; return tp; } }
     if(d<0.){
       float a=tp,b=t,da=dp,db=d;
       for(int j=0;j<5;j++){
@@ -264,6 +281,7 @@ float march(vec3 ro,vec3 rd){
   gFarLod=0.;
   /* Out of steps while skimming just above the ground: call it a hit, rather than show sky through a
      mountain. Only mountain scenes skim long enough for this to happen. */
+  if(gCone>0.) return tp<t1?tp:1e9;
   if(tp<t1&&dp<max(tp*.004,2.)) return tp;
   return up?-1.:t1;
 }
@@ -1921,6 +1939,8 @@ vec3 octDec(vec2 e){ vec3 n=vec3(e.x,1.-abs(e.x)-abs(e.y),e.y); if(n.y<0.) n.xz=
    function above; a stage keeps only those it calls) plus a short main below. Measured 13 November 2026:
    the whole ground in one program 67 s; as stages A, B and C 8, 5 and 3 s; the water 3 s.
 
+   Z  (added 15 November 2026) a quarter-size first pass of the march, so A can skip the empty air.
+        writes  z: how far along its ray each block of 4 x 4 pixels may start (r)
    A  finds the surface under each pixel (the march) and starts the ground: its colour, the plant cover on
       it, and the litter under the plants.
         writes  gA0: ground colour (rgb), how sandy (a)
@@ -1940,10 +1960,19 @@ vec3 octDec(vec2 e){ vec3 n=vec3(e.x,1.-abs(e.x)-abs(e.y),e.y); if(n.y<0.) n.xz=
    channel there, or work it out again from the surface (surfAt, groundBase). Keep each stage small: a
    stage that grows past about 10 s to compile should be cut in two. tools/checks/start.js fails if any
    shader takes more than 30 s. */
+/* Z: before A, at a quarter of the size each way: how far each block of pixels can go before it comes
+   near the surface (march above). uConeK: the cone's radius in pixels (4; the block's half-diagonal is 2.8). */
+const FS_VIEW_Z=VIEW_LIB+`
+layout(location=0) out vec4 oZ;
+void main(){ float pa; vec3 rd=viewRay(pa); gCone=pa*uConeK; oZ=vec4(march(uRo,rd),0.,0.,0.); }`;
 const FS_VIEW_A=VIEW_LIB+`
 layout(location=0) out vec4 oA0; layout(location=1) out vec4 oA1;
 void main(){
   float pa; vec3 rd=viewRay(pa);
+  if(uPre>.5){
+    ivec2 zs=textureSize(tZ,0), q=clamp(ivec2(floor((gl_FragCoord.xy-2.)/4.)),ivec2(0),zs-2);
+    gT0=min(min(texelFetch(tZ,q,0).r,texelFetch(tZ,q+ivec2(1,0),0).r),min(texelFetch(tZ,q+ivec2(0,1),0).r,texelFetch(tZ,q+ivec2(1,1),0).r));
+  }
   float t=march(uRo,rd);
   oA0=vec4(0.);
   if(t<0.){ gl_FragDepth=1.; oA1=vec4(0.,0.,-1.,0.); return; }
@@ -2165,4 +2194,4 @@ void main(){
   else { vec4 C=s.w>0.?textureLod(tExtra,s.uv,0.):vec4(0.); o=vec4(C.y*isW,C.z*isW,s.T,s.eta); }
 }`;
 /* The four stages, in the order they are drawn. */
-const VIEW_STAGES=['viewA','viewB','viewC','viewW'];
+const VIEW_STAGES=['viewZ','viewA','viewB','viewC','viewW'];

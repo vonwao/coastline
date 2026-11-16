@@ -20,7 +20,7 @@ function buildPrograms(){
   P('noise',FS_NOISE);P('noise3',FS_NOISE3);P('clouds',FS_CLOUDS);P('lace',FS_LACE);P('crown',FS_CROWN);P('rockH',FS_ROCKH);P('rockN',FS_ROCKN);P('plantBake',FS_PLANT_BAKE,VS_PLANT_BAKE);P('plantList',FS_PLANT_LIST);P('mesh',FS_MESH,VS_MESH);P('cards',FS_CARDS,VS_CARDS);P('spec',FS_SPEC);P('fft',FS_FFT);P('copy',FS_COPY);
   P('caus',FS_CAUS,VS_CAUS);P('sky',FS_SKY);FS_TERRAIN_KINDS.forEach((f,i)=>P('terrain'+i,f));P('terrainMix',FS_TERRAIN_MIX);P('lit',FS_LIT);P('grid',FS_GRID);
   P('simInit',FS_SIMINIT);P('simU',FS_SIMU);P('simH',FS_SIMH);P('simRM',FS_SIMRM);P('foam',FS_FOAM);
-  P('sprayStep',FS_SPRAY_STEP);P('spray',FS_SPRAY,VS_SPRAY);P('brk',FS_BRK);P('brkRow',FS_BRKROW);P('lip',FS_LIP,VS_LIP);P('viewA',FS_VIEW_A);P('viewB',FS_VIEW_B);P('viewC',FS_VIEW_C);P('viewW',FS_VIEW_W);P('label',FS_LABEL);P('bdown',FS_BDOWN);P('bup',FS_BUP);P('tone',FS_TONE);P('mix',FS_MIX);P('final',FS_FINAL);P('taa',FS_TAA);P('people',FS_PEOPLE,VS_PEOPLE);
+  P('sprayStep',FS_SPRAY_STEP);P('spray',FS_SPRAY,VS_SPRAY);P('brk',FS_BRK);P('brkRow',FS_BRKROW);P('lip',FS_LIP,VS_LIP);P('viewZ',FS_VIEW_Z);P('viewA',FS_VIEW_A);P('viewB',FS_VIEW_B);P('viewC',FS_VIEW_C);P('viewW',FS_VIEW_W);P('label',FS_LABEL);P('bdown',FS_BDOWN);P('bup',FS_BUP);P('tone',FS_TONE);P('mix',FS_MIX);P('final',FS_FINAL);P('taa',FS_TAA);P('people',FS_PEOPLE,VS_PEOPLE);
   P('snd',FS_SND);
   if(REAL_COAST) P('terrainReal',FS_TERRAIN_REAL);
 }
@@ -133,13 +133,17 @@ async function bakeTerrain(tex,type,seed,min,size,near,tiles,form=0,half=0,gentl
   const pause=async()=>{ gl.disable(gl.SCISSOR_TEST); await nextFrame(); use(TP,U); gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.viewport(0,0,tex.w,tex.h); gl.enable(gl.SCISSOR_TEST); };
   let y=0;
   if(gentle&&gentle.on){
-    let rows=Math.max(2,Math.round(6000/tex.w)), last=performance.now();
+    /* As many rows a frame as the chip has time to spare (rhythmChunk in js/rhythm.js), by what a row of
+       this texture has cost so far. Without the chip's timer: as many as leave the frames on time. */
+    const tag='terrain|'+TP.name+'|'+tex.w;
+    let rows=Math.max(2,Math.round(6000/tex.w)), last=performance.now(), ok=0;
     while(y<tex.h&&gentle.on){
-      const h=Math.min(rows,tex.h-y);
-      gl.scissor(0,y,tex.w,h); gl.drawArrays(gl.TRIANGLES,0,3); y+=h;
+      const h=Math.min(RH.ext?rhythmChunk(tag,Math.max(1,Math.round(2000/tex.w)),tex.h>>3):rows,tex.h-y);
+      if(h>0){ const y0=y; rhythmTimed(tag,h,()=>{ gl.scissor(0,y0,tex.w,h); gl.drawArrays(gl.TRIANGLES,0,3); }); y+=h; }
       await pause();
       const now=performance.now(),d=now-last,fr=Math.max(state.dtAvg||16.7,16.7); last=now;
-      if(d>fr*1.45) rows=Math.max(1,Math.floor(rows*.6)); else if(d<fr*1.2) rows=Math.min(tex.h>>3,Math.ceil(rows*1.3));
+      /* (Half as many after a late frame, a few more only after twenty frames on time: late frames stay rare.) */
+      if(d>fr*1.15){ rows=Math.max(1,Math.floor(rows*.5)); ok=0; } else if(++ok>=20){ rows=Math.min(tex.h>>3,Math.ceil(rows*1.3)); ok=0; }
     }
   }
   /* The rest (all of it, unless gentle): in tiles, two a frame. */
@@ -327,14 +331,19 @@ async function buildLocation(L,progress,gentle=null){
   const total=L.spin||(TEST?26:26);
   const steps=Math.ceil(total/dt); let done=0; let chunk=soft()?4:30;
   let last=performance.now();
+  const tag='spin|'+L.nx+'x'+L.nz; let okN=0;
   while(done<steps){
-    const n=Math.min(chunk,steps-done);
-    for(let i=0;i<n;i++){ simStep(L,dt); if((done+i)%2===1) foamStep(L,dt*2); }
+    /* Behind a running picture, only as many steps as the chip has time to spare (js/rhythm.js). */
+    const timed=soft()&&RH.ext, n=Math.min(timed?rhythmChunk(tag,2,40):chunk,steps-done);
+    if(n>0){
+      const d0=done, run=()=>{ for(let i=0;i<n;i++){ simStep(L,dt); if((d0+i)%2===1) foamStep(L,dt*2); } };
+      if(timed) rhythmTimed(tag,n,run); else run();
+    }
     done+=n; progress(.3+.7*done/steps);
     await nextFrame();
     const now=performance.now(),d=now-last; last=now;
-    /* Behind a running picture, only as many steps as leave its frames nearly on time. */
-    if(soft()){ const f=Math.max(state.dtAvg||16.7,16.7); if(d>f*1.45) chunk=Math.max(1,Math.floor(chunk*.7)); else if(d<f*1.2) chunk=Math.min(40,chunk+1); }
+    /* Without the chip's timer: only as many steps as leave its frames on time. */
+    if(soft()){ const f=Math.max(state.dtAvg||16.7,16.7); if(d>f*1.15){ chunk=Math.max(1,Math.floor(chunk*.5)); okN=0; } else if(++okN>=20){ chunk=Math.min(40,chunk+1); okN=0; } }
     else if(d>70) chunk=Math.max(6,Math.floor(chunk*.75)); else if(d<34) chunk=Math.min(180,Math.floor(chunk*1.25));
   }
   if(soft()) await nextFrame();
@@ -354,7 +363,8 @@ async function buildLocation(L,progress,gentle=null){
    is shown about twice before it is put away. (Putting away the one shown longest ago instead kept one
    coast for good, alternating with each newcomer.)
    Tools, checks and anything that names its coasts build them all at the start, as before (COASTS.auto
-   stays false). Decision and numbers: TECHLOG 66. */
+   stays false). Decision and numbers: TECHLOG 66. Building behind the picture uses only the time the chip
+   has to spare (rhythmChunk in js/rhythm.js, TECHLOG 67). */
 const COAST_KEEP=3;
 const COASTS={auto:false,busy:null,chain:Promise.resolve(),now:null};
 /* Put a built coast away: everything buildLocation made for it. Its settings (waves, name, shape) stay,
@@ -397,7 +407,7 @@ function coastNext(prev){
    when the built ones have all been shown. */
 function coastTend(){
   if(!COASTS.auto||COASTS.busy||!state.cur) return;
-  const pinned=L=>L===state.cur.L||(state.next&&L===state.next.L)||L===state.upL;
+  const pinned=L=>L===state.cur.L||(state.next&&L===state.next.L)||L===state.upL||L===AHEAD.L;
   const built=LOCATIONS.filter(L=>L.ready), el=coastEligible();
   /* Put away: a coast that no longer suits first, then the one built longest ago. Never one on screen, nor
      one still waiting for its first turn. */
@@ -412,6 +422,6 @@ function coastTend(){
   const least=Math.min(...cand.map(L=>L.lastShown||0));
   const L=pick(cand.filter(L=>(L.lastShown||0)===least));
   if(built.length>=COAST_KEEP&&!evict()) return;
-  COASTS.busy=L;
+  COASTS.busy=L; COASTS.since=performance.now();
   coastBuild(L,true).catch(e=>{ L.buildFailed=true; console.warn('[coasts] '+L.name+' could not be built: '+(e&&e.message)); }).finally(()=>{ COASTS.busy=null; });
 }

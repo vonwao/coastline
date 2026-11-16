@@ -7,6 +7,7 @@ function allocRT(w,h){
   if(RT.bloom) for(const b of RT.bloom){ gl.deleteTexture(b.t); gl.deleteFramebuffer(b.f); }
   const mk=(fmt)=>{ const t=makeTex(w,h,{fmt}); return {t,f:makeFBO(t)}; };
   if(RT.depth) gl.deleteTexture(RT.depth);
+  if(RT.z){ gl.deleteTexture(RT.z.t); gl.deleteFramebuffer(RT.z.f); }
   if(RT.g){ for(const t of RT.g.t) gl.deleteTexture(t); gl.deleteFramebuffer(RT.g.a); gl.deleteFramebuffer(RT.g.b); }
   if(RT.taa) for(const s of RT.taa) for(let i=0;i<2;i++){ gl.deleteTexture(s.t[i]); gl.deleteFramebuffer(s.f[i]); }
   /* The depth buffer is a texture, so the smoothing over time (taaResolve in frame.js) can read how far
@@ -26,7 +27,9 @@ function allocRT(w,h){
   const gt=['RGBA16F','RGBA32F','RGBA16F','RGBA16F'].map(fmt=>makeTex(w,h,{fmt,filter:'nearest'}));
   const g={t:gt,a0:gt[0],a1:gt[1],b0:gt[2],b1:gt[3],a:makeFBO(gt[0],gt[1]),b:makeFBO(gt[2],gt[3])};
   for(const f of [g.a,g.b]){ gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,depth,0); }
-  RT={w,h,depth,g,hdrA:mk('RGBA16F'),ldrA:mk('RGBA8'),ldrB:mk('RGBA8'),ldrM:mk('RGBA8'),cloud:{t:ct,f:makeFBO(ct)},bloom:[],taa:[slot(),slot()]};
+  /* z: the quarter-size first pass of the march (FS_VIEW_Z): a distance for each block of 4 x 4 pixels. */
+  const zw=Math.ceil(w/4),zh=Math.ceil(h/4),zt=makeTex(zw,zh,{fmt:'RGBA32F',filter:'nearest'});
+  RT={w,h,depth,g,z:{t:zt,f:makeFBO(zt),w:zw,h:zh},hdrA:mk('RGBA16F'),ldrA:mk('RGBA8'),ldrB:mk('RGBA8'),ldrM:mk('RGBA8'),cloud:{t:ct,f:makeFBO(ct)},bloom:[],taa:[slot(),slot()]};
   gl.bindFramebuffer(gl.FRAMEBUFFER,RT.hdrA.f); gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,depth,0);
   let bw=w,bh=h;
   for(let i=0;i<5;i++){ bw=Math.max(2,bw>>1); bh=Math.max(2,bh>>1); const t=makeTex(bw,bh); RT.bloom.push({t,f:makeFBO(t),w:bw,h:bh}); }

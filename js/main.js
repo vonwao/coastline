@@ -99,6 +99,7 @@ async function main(){
   seen();
   later.forEach(finalizeProgram);
   try{ localStorage.setItem('coastline-view-ms',Math.round(performance.now()-t0)); }catch(e){}
+  rhythmCut(S,true);
   state.cur=S; coastShown(S.L); state.last=performance.now();
   document.getElementById('load').style.opacity=0;
   setTimeout(()=>document.getElementById('load').remove(),600);
