@@ -11,7 +11,7 @@ Address options: `?calm=1`, `?sound=1` (needs a click first), `?live=<latitude>,
 to follow a real beach's sea and sky, `?coast=pointlobos` (or `malibu`, `bondi`, `nazare`) for the
 real-coast test.
 
-This repository holds only the published page, built from a private project (version f8ff320).
+This repository holds only the published page, built from a private project (version a1bd05d).
 
 ## Credits
 

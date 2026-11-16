@@ -30,23 +30,27 @@
 
    ?fps=30 or 60 fixes the rate, ?res= the size, ?min60= the smallest size worth 60 a second (0.6).
    Tools (?test) are left alone: they draw their own frames. */
-const RH_KEY='coastline-rhythm-v1';
-/* The part of a frame that doesn't depend on the picture's size (the sea), in ms. */
-const RH_FIX=3;
+const RH_KEY='coastline-rhythm-v2';
+/* RH.fix: the part of a frame's cost that doesn't depend on the picture's size (the sea, the plants' and
+   people's shapes, the last pass to the screen), in ms. Measured 16 November 2026 on the Arc 140T, the same
+   held shots at five sizes: 9 to 12 ms on most, 5 on one; the rest grows by 5.5 to 12 ms per million pixels.
+   (A first version took it to be 3: then a smaller picture seemed to save far more than it does, the page
+   shrank the picture to its floor, and there every shot seemed too dear per pixel to grow again.) It is
+   corrected whenever a shot is resized part way, which gives the same shot's cost at two sizes, and kept. */
 /* A shot gets a rate if it is expected to cost less than this (ms); the rest of the refresh is left for
    the browser and for costs that vary along the camera's path. Mid-shot it loses the rate above RH_OUT. */
 const RH_FIT={60:13.5,30:28.5,20:45}, RH_OUT={60:15,30:31.5,20:1e9};
 const RH_S60=+(Q.get('min60')||.6), RH_SMIN=.5;
-const RH={on:false,ext:null,active:null,rec:null,q:[],bq:[],unit:{},hist:{},gpu:'',saveT:0,used:0,starve:0,lastNow:0,lastS:null};
+const RH={fix:9,on:false,ext:null,active:null,rec:null,q:[],bq:[],unit:{},hist:{},gpu:'',saveT:0,used:0,starve:0,lastNow:0,lastS:null};
 function rhythmInit(){
   RH.on=!TEST;
   if(!RH.on) return;
   RH.ext=Q.has('notimer')?null:gl.getExtension('EXT_disjoint_timer_query_webgl2');
   const e=gl.getExtension('WEBGL_debug_renderer_info'); RH.gpu=String(e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER));
   /* What was learned before holds only for the same graphics chip. */
-  try{ const o=JSON.parse(localStorage.getItem(RH_KEY)||'null'); if(o&&o.gpu===RH.gpu&&o.timer===!!RH.ext&&o.hist) RH.hist=o.hist; }catch(e){}
+  try{ const o=JSON.parse(localStorage.getItem(RH_KEY)||'null'); if(o&&o.gpu===RH.gpu&&o.timer===!!RH.ext&&o.hist){ RH.hist=o.hist; if(o.fix>0) RH.fix=o.fix; } }catch(e){}
 }
-function rhythmSave(){ clearTimeout(RH.saveT); RH.saveT=setTimeout(()=>{ try{ localStorage.setItem(RH_KEY,JSON.stringify({gpu:RH.gpu,timer:!!RH.ext,hist:RH.hist})); }catch(e){} },4000); }
+function rhythmSave(){ clearTimeout(RH.saveT); RH.saveT=setTimeout(()=>{ try{ localStorage.setItem(RH_KEY,JSON.stringify({gpu:RH.gpu,timer:!!RH.ext,fix:RH.fix,hist:RH.hist})); }catch(e){} },4000); }
 function rhythmKey(S){ return S.L.name+'|'+S.kind; }
 /* What a shot is expected to cost, in ms per million pixels: what its coast and kind cost before, plus
    their usual spread; else the average of its kind on other coasts; else a first guess. */
@@ -59,9 +63,9 @@ function rhythmCostMP(S){
    it some. */
 function rhythmRoom(){ return typeof COASTS!=='undefined'&&COASTS.busy&&performance.now()-(COASTS.since||0)>90000?3:0; }
 /* The largest share of the full size at which a shot costing c ms per million pixels fits the rate. */
-function rhythmFit(c,rate){ return Math.sqrt(Math.max(RH_FIT[rate]-rhythmRoom()-RH_FIX,1)/(c*canvas.width*canvas.height/1e6)); }
+function rhythmFit(c,rate){ return Math.sqrt(Math.max(RH_FIT[rate]-rhythmRoom()-RH.fix,1)/(c*canvas.width*canvas.height/1e6)); }
 /* Would this shot hold 30 a second at the present size? (A dissolve can't change the size.) */
-function rhythmFits(S){ return !RH.on||RH_FIX+rhythmCostMP(S)*RT.w*RT.h/1e6<=RH_FIT[30]; }
+function rhythmFits(S){ return !RH.on||RH.fix+rhythmCostMP(S)*RT.w*RT.h/1e6<=RH_FIT[30]; }
 /* A shot is about to come on: its rate, and (resize) the picture size, which every shot on screen shares.
    also: a shot that stays on screen through a dissolve; the size must suit it too, by what it cost. */
 function rhythmCut(S,resize,also){
@@ -72,13 +76,13 @@ function rhythmCut(S,resize,also){
     if(!rate) rate=rhythmFit(c,60)>=RH_S60?60:30;
     let want=Math.min(1,Math.max(RH_SMIN,rhythmFit(c,rate>=45?60:rate>=25?30:20)));
     const alone=want;
-    if(also&&also.rh&&also.rh.n>=8){ const r=capFor(also), a=state.scale*Math.sqrt(Math.max(RH_FIT[r>=45?60:r>=25?30:20]-RH_FIX,1)/Math.max(also.rh.hi-RH_FIX,1)); want=Math.min(want,Math.max(RH_SMIN,a)); }
+    if(also&&also.rh&&also.rh.n>=8){ const r=capFor(also), a=state.scale*Math.sqrt(Math.max(RH_FIT[r>=45?60:r>=25?30:20]-RH.fix,1)/Math.max(also.rh.hi-RH.fix,1)); want=Math.min(want,Math.max(RH_SMIN,a)); }
     /* The present size stays unless it is too big, or more than a tenth smaller than it could be. */
     if(s>want||s<want*.9) s=Math.floor(want*50)/50;
     /* Held down for the shot it dissolves from: it may grow once that one has gone (frame, js/frame.js). */
     S.rhGrow=alone>s*1.15;
   }
-  else if(!rate) rate=RH_FIX+c*RT.w*RT.h/1e6<=RH_FIT[60]-rhythmRoom()?60:30;
+  else if(!rate) rate=RH.fix+c*RT.w*RT.h/1e6<=RH_FIT[60]-rhythmRoom()?60:30;
   if(Math.abs(s-state.scale)>.005){ state.scale=s; applyScale(); }
   S.rate=rate;
   S.rh={n:0,skip:3,ema:0,hi:0,px:RT.w*RT.h/1e6,guess,miss:0,seen:0};
@@ -95,11 +99,17 @@ function rhythmSample(S,ms){
   if(h.n>=3) ms=Math.min(ms,h.ema*1.4+2);
   h.ema=h.n?h.ema+(ms-h.ema)*.2:ms; h.n++;
   if(h.n>=5) h.hi=Math.max(h.hi,h.ema);
+  /* The same shot at two sizes (it was resized part way): where the line through the two costs meets size
+     nought is the part that doesn't depend on size. */
+  if(h.was&&h.n===12){
+    const [p1,c1]=h.was; h.was=null;
+    if(Math.abs(h.px-p1)>p1*.15){ const F=(c1*h.px-h.ema*p1)/(h.px-p1); RH.fix=+(RH.fix+(Math.min(Math.max(F,2),.8*Math.min(c1,h.ema))-RH.fix)*.25).toFixed(2); rhythmSave(); }
+  }
   if(FPS_FIX||S!==state.cur) return;
   const r=S.rate>=45?60:S.rate>=25?30:20, left=S.dur-S.t, may=!Q.has('res')&&!state.next&&!S.hold;
   /* The size that would fit the rate, by what the frames cost now. */
-  const fit=x=>state.scale*Math.sqrt(Math.max(RH_FIT[r]-RH_FIX,1)/Math.max(x-RH_FIX,1));
-  const resize=s=>{ state.scale=Math.floor(s*50)/50; applyScale(); h.n=0; h.skip=3; h.hi=0; h.px=RT.w*RT.h/1e6; };
+  const fit=x=>state.scale*Math.sqrt(Math.max(RH_FIT[r]-RH.fix,1)/Math.max(x-RH.fix,1));
+  const resize=s=>{ h.was=[h.px,h.ema]; state.scale=Math.floor(s*50)/50; applyScale(); h.n=0; h.skip=3; h.hi=0; h.px=RT.w*RT.h/1e6; };
   if(h.n>=5&&h.ema>RH_OUT[r]){
     /* Dearer than expected. With enough of the shot left, a smaller picture at the same rate; else the
        next rate down to its end. */
@@ -116,7 +126,7 @@ function rhythmSample(S,ms){
 /* A shot has left the screen: remember what its kind costs on its coast, by its dearest stretch. */
 function rhythmLearn(S){
   const h=S&&S.rh; if(!RH.on||!h||h.n<12||!h.hi) return;
-  const c=Math.max((h.hi-RH_FIX)/h.px,1), k=rhythmKey(S), o=RH.hist[k];
+  const c=Math.max((h.hi-RH.fix)/h.px,1), k=rhythmKey(S), o=RH.hist[k];
   if(!o) RH.hist[k]=[+c.toFixed(2),+(c*.12).toFixed(2),1];
   else { const d=Math.abs(c-o[0]); o[0]=+(o[0]+(c-o[0])*.5).toFixed(2); o[1]=+(o[1]+(d-o[1])*.5).toFixed(2); o[2]++; }
   h.n=0; rhythmSave();
