@@ -1510,8 +1510,15 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
   vec3 r=mix(r1,r2,smoothstep(.32,.68,band*.65+fineB*.35));
   /* Iron stains and darker patches */
   r=mix(r,vec3(.26,.175,.115),smoothstep(.56,.74,big.g)*.38);
-  r=mix(r,r3,smoothstep(.50,.74,mid.r)*.34);
+  r=mix(r,r3,smoothstep(.50,.74,mid.r)*.2);
   float steepF=1.-smoothstep(.35,.7,Ng.y);
+  /* Water running down steep faces leaves long dark streaks. (Round dark blotches alone made the cliffs
+     look camouflaged.) */
+  {
+    vec2 tn=normalize(vec2(-Ng.z,Ng.x)+1e-4);
+    float stk=smoothstep(.5,.72,textureLod(tNoise,vec2(dot(P.xz,tn)/9.,P.y/70.+.5),max(log2(max(fp,1e-3)*512./9.),0.)).g);
+    r*=1.-.3*stk*steepF*(1.-uGranite);
+  }
   if(uGranite>0.){
     /* Granite: pale grey with a pink cast and no beds. Rain draining down steep sides leaves dark streaks. */
     vec3 gr=mix(vec3(.25,.225,.205),vec3(.42,.385,.35),smoothstep(.3,.7,big.g*.6+mid.r*.4));
@@ -1521,16 +1528,18 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
     r=mix(r,gr,uGranite);
   }
   /* Weathering tone, and a few wandering cracks from the stone texture. */
-  r*=.68+.40*rA.y+.24*rB.y;
+  r*=.75+.27*rA.y+.24*rB.y;
   r*=.82+.36*rC.y;
   float crA=smoothstep(.42,.66,big.r*.5+mid.b*.5);
   r*=1.-.30*rA.x*crA-.18*rB.x-.15*rC.x*fineK;
   /* Cliffs are built of beds: on steep faces each bed boundary is a recessed, shadowed line,
      and the beds weather to slightly different tones. */
-  float bedY=(P.y+dip+wob*.35)/1.9;
-  float bedL=smoothstep(.80,.97,fract(bedY))*(.5+.5*smoothstep(.3,.6,mid.b));
+  /* Their thickness varies with height (it was an even 1.9 m, which read as a stack of plates), and only
+     some boundaries are marked strongly. */
+  float bedY=(P.y+dip+wob*.35)/1.9+.55*sin(P.y*.23+.7)+.3*sin(P.y*.71+1.3);
   float bedT=fract(sin(floor(bedY)*12.9898)*43758.5453);
-  r*=1.-steepF*(.30*bedL-.12*(bedT-.5))*(1.-smoothstep(.15,.6,fp))*(1.-uGranite);
+  float bedL=smoothstep(.80,.97,fract(bedY))*(.5+.5*smoothstep(.3,.6,mid.b))*mix(.25,1.,bedT*bedT);
+  r*=1.-steepF*(.26*bedL-.12*(bedT-.5))*(1.-smoothstep(.15,.6,fp))*(1.-uGranite);
   /* Joints. Rock breaks along a few sets of near-parallel planes: here one set along the beds of the
      coast and one across them. Where a set meets a face it shows as a line, so faces break into
      blocks, not the random polygons of a crack net, which read as crumpled paper. Cross joints are
@@ -1845,16 +1854,31 @@ uniform sampler2D tGA0,tGA1,tGB0,tGB1;
    the time a body sliding down has been falling, which grows with the square root of the drop. So the
    streaks stretch as they speed up, as falling water does. The sheet widens and tears into strands on its
    way down. Out: how much of the pixel is water, how white it is, and how wet the rock beside it. */
-uniform vec4 uFallA,uFallB;
-float fallZ(float x){ return uFallA.z+5.*sin((x-uFallB.z)*.05)*smoothstep(-20.,-80.,x-uFallB.z); }
-void fallAt(vec3 P,float fp,out float cov,out float white,out float wetK){
-  cov=0.; white=0.; wetK=0.;
-  if(uFallA.w<.5) return;
-  float up=uFallA.x-P.x;
-  if(up>250.||P.x>uFallB.x+8.) return;
-  float drop=max(uFallA.y-P.y,0.), face=smoothstep(.6,3.,drop);
-  float fz=P.z-fallZ(P.x)+1.1*sin(drop*.23+1.7)*smoothstep(4.,16.,drop);
-  float hw=1.3+1.1*face+.055*drop;
+uniform vec4 uFallA[2],uFallB[2],uFallC[2];
+/* Up to two falls (fallUniforms in js/world.js), each: uFallA the lip's x and height, the stream's place
+   along the coast (z), on or off; uFallB the foot's x and height, about where the lip is; uFallC the way
+   the water runs (+1 toward larger x), a width factor, how far upstream the stream is drawn, and the kind:
+   0 a fall over a cliff, 1 a cascade down a stair of steps (white only where it drops, dark in the pools
+   between, judged by how steep the ground is), 2 a thread far off on a mountainside, which wanders as it
+   runs down. */
+float fallZ(int i,float x){
+  float dx=x-uFallB[i].z, dn=dx*uFallC[i].x;
+  float z=uFallA[i].z+5.*sin(dx*.05)*smoothstep(-20.,-80.,dn);
+  if(uFallC[i].w>1.5) z+=(22.*sin(dn*.0071+1.3)+7.*sin(dn*.029))*smoothstep(0.,60.,dn);
+  return z;
+}
+void fallOne(int i,vec3 P,float fp,float ny,inout float cov,inout float white,inout float wetK){
+  vec4 A=uFallA[i],B=uFallB[i],C=uFallC[i];
+  if(A.w<.5) return;
+  float dir=C.x, up=dir*(A.x-P.x);
+  if(up>C.z||dir*(P.x-B.x)>8.) return;
+  float drop=max(A.y-P.y,0.), face=smoothstep(.6,3.,drop);
+  if(C.w>.5&&C.w<1.5) face*=mix(.25,1.,smoothstep(.9,.6,ny));
+  /* A far thread shows where the mountainside is steep; on the gentle slope below it is a faint stream,
+     mostly hidden. (Drawn the same all the way down, it read as a road.) */
+  float steepK=C.w>1.5?mix(.12,1.,smoothstep(.9,.72,ny)):1.;
+  float fz=P.z-fallZ(i,P.x)+1.1*sin(drop*.23+1.7)*smoothstep(4.,16.,drop);
+  float hw=(1.3+1.1*face+.055*min(drop,60.))*C.y;
   float x=abs(fz)/hw;
   if(x>3.2) return;
   float a=sqrt(drop/3.4)-max(up,0.)/1.7-uTime;
@@ -1866,12 +1890,23 @@ void fallAt(vec3 P,float fp,out float cov,out float white,out float wetK){
   /* A full sheet at the lip; lower down, gaps open where the strands thin. */
   float full=1.-smoothstep(6.,42.,drop)*.75;
   float veil=smoothstep(.22,.46,strand+.42*full);
-  cov=edge*mix(.92,veil,face)*smoothstep(250.,215.,up);
+  float upK=smoothstep(C.z,C.z*.86,up);
+  float c=edge*mix(.92,veil,face)*upK*steepK;
+  /* A fall over a cliff has its water as a sheet in the air (js/shaders/fall.js): on the rock behind it,
+     only a film of water and a few white trickles. */
+  if(C.w<.5) c*=mix(1.,.3,face);
+  if(c<=cov) return;
+  cov=c;
   /* On top: dark, glassy water with soft white riffles, whitening as it nears the lip. On the face: white,
      dimmer between the strands. */
   float rif=textureLod(tNoise,vec2(fz/9.,a*.11),max(lod-1.5,0.)).r*.6+n3*.4;
   white=mix(max(smoothstep(.6,.86,rif)*.5,smoothstep(9.,1.,up)*.85),.58+.42*smoothstep(.3,.72,strand),face);
-  wetK=(1.-smoothstep(.9,2.8,x+(n3-.5)*.5))*(.35+.65*face)*smoothstep(250.,215.,up);
+  wetK=max(wetK,(1.-smoothstep(.9,2.8,x+(n3-.5)*.5))*(.35+.65*face)*upK);
+}
+void fallAt(vec3 P,float fp,float ny,out float cov,out float white,out float wetK){
+  cov=0.; white=0.; wetK=0.;
+  fallOne(0,P,fp,ny,cov,white,wetK);
+  fallOne(1,P,fp,ny,cov,white,wetK);
 }
 /* The view ray through this pixel; pa is the angle one pixel covers. */
 vec3 viewRay(out float pa){ vec2 ndc=vUV*2.-1.+uJit; pa=2.*uTan/uResY; return normalize(uF+uR*ndc.x*uTan*uAspect+uU*ndc.y*uTan); }
@@ -2113,7 +2148,7 @@ void main(){
     alb=mix(alb,sc,snow); Nd=normalize(mix(Nd,N,snow*.7)); m.b*=1.-snow;
   }
   /* A waterfall and its stream, on the ground they run over (fallAt above). */
-  float fCov,fWhite,fWet; fallAt(P,fp,fCov,fWhite,fWet);
+  float fCov,fWhite,fWet; fallAt(P,fp,N.y,fCov,fWhite,fWet);
   if(fCov>0.){
     alb=mix(alb,mix(vec3(.035,.06,.065),vec3(.95,.97,.99),fWhite),fCov);
     Nd=normalize(mix(Nd,N+vec3(0.,.6,0.),fCov*.85)); m.b*=1.-fCov; sandness*=1.-fCov;

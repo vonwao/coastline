@@ -112,42 +112,53 @@ function makeShot(L,lightKey,kind,sunOk,w){
   }
   return best;
 }
-/* ---- Shots of a coast's waterfall (fall in js/scenes.js; fallMeasure in js/world.js) ----
+/* ---- Shots of a coast's waterfalls (fall in js/scenes.js; fallMeasure in js/world.js) ----
    A random shot rarely catches one spot on a kilometre of coast, so the slideshow asks for these now and
-   then on a coast that has a fall (chooseNext in js/frame.js; ?fall=1 shows nothing else). Three views:
-   from out at sea with the whole drop in the picture; close in and low, near the foot; and from behind the
-   lip, looking down the stream and out to sea. The camera drifts round the fall, pushes in or rises,
-   turning to keep the fall in the picture. calm: long and slow, for calm mode. */
+   then on a coast that has a fall (chooseNext in js/frame.js; ?fall=1 shows nothing else). One of the
+   coast's falls is chosen. A fall or cascade near the camera has three views: from out on the water with
+   the whole drop in the picture; close in and low, near the foot; and from behind the lip, low along the
+   stream. A thread far off across the water has two: from out on the water with a long lens, and from up
+   the near slope, the whole valley in view. The camera drifts round, pushes in or rises, turning to keep
+   the fall in the picture. calm: long and slow, for calm mode. */
 function makeFallShot(L,lightKey,calm){
-  const U=L.fallU; if(!U) return null;
+  const Fs=L.falls||[]; if(!Fs.length) return null;
+  const F=pick(Fs), U=F;
   /* Left to the shot, any light but the dark ones. */
   for(let i=0;i<8&&(!lightKey||dimLight(lightKey));i++) lightKey=pickLight(L,'angled');
   const sunOk=Math.random()<SUN_SHARE;
-  const lip=[U.A[0],U.A[1],U.A[2]], foot=[U.B[0],0,U.A[2]], H=lip[1];
-  const xHi=L.domMin[0]+L.domSize[0]*.95, zLo=L.domMin[1]+L.domSize[1]*.06, zHi=L.domMin[1]+L.domSize[1]*.94;
+  const dir=U.C[0], lip=[U.A[0],U.A[1],U.A[2]], foot=[U.B[0],0,U.A[2]], H=lip[1];
+  const xLo=L.domMin[0]+L.domSize[0]*.04, xHi=L.domMin[0]+L.domSize[0]*.95, zLo=L.domMin[1]+L.domSize[1]*.06, zHi=L.domMin[1]+L.domSize[1]*.94;
+  const clampZ=z=>Math.min(Math.max(z,zLo+10),zHi-10);
   let best=null;
-  for(let i=0;i<12;i++){
-    const v=pick(['sea','sea','sea','close','close','close','lip']), side=Math.random()<.5?1:-1;
-    let cam,tgt;
-    if(v==='sea'){ const d=rnd(100,170),a=side*rnd(.2,.7); cam=[foot[0]+d*Math.cos(a),rnd(.35,.8)*H+4,foot[2]+d*Math.sin(a)]; tgt=[(lip[0]+foot[0])*.5,H*.48,lip[2]]; }
-    else if(v==='close'){ const d=rnd(38,62),a=side*rnd(.3,.9); cam=[foot[0]+d*Math.cos(a),rnd(8,18),foot[2]+d*Math.sin(a)]; tgt=[(lip[0]+foot[0])*.5,H*.42,lip[2]]; }
-    /* Low over the stream, looking along it to the notch where it drops away, with the sea beyond. */
-    else { cam=[lip[0]-rnd(40,70),H+rnd(9,15),lip[2]+side*rnd(2,8)]; tgt=[lip[0]+10,H-8,lip[2]]; }
-    const dur=calm?rnd(35,60):rnd(5.5,8), len=(calm?rnd(.6,1.3):rnd(2.5,5))*dur*(v==='sea'?1:.6);
-    const dx=tgt[0]-cam[0], dz=tgt[2]-cam[2], hl=Math.hypot(dx,dz)||1, dir=[dx/hl,dz/hl], lat=[-dir[1],dir[0]];
+  for(let i=0;i<14;i++){
+    const side=Math.random()<.5?1:-1;
+    let v,cam,tgt,fov;
+    if(F.far){
+      v=pick(['across','across','valley']);
+      tgt=[(lip[0]+foot[0])*.5,H*.42,lip[2]];
+      if(v==='across'){ cam=[rnd(L.domMin[0]+L.domSize[0]*.45,xHi-10),rnd(12,45),clampZ(lip[2]+rnd(-260,-40))]; fov=deg(rnd(34,44)); }
+      else { const x=rnd(xLo+10,L.domMin[0]+L.domSize[0]*.25), z=clampZ(lip[2]+rnd(-320,-60)); cam=[x,groundAt(L,x,z)+rnd(28,50),z]; fov=FOV_ANG; }
+    } else {
+      v=pick(['sea','sea','sea','close','close','close','lip']);
+      if(v==='sea'){ const d=rnd(100,170),a=side*rnd(.2,.7); cam=[foot[0]+dir*d*Math.cos(a),rnd(.35,.8)*H+4,foot[2]+d*Math.sin(a)]; tgt=[(lip[0]+foot[0])*.5,H*.48,lip[2]]; fov=deg(38); }
+      else if(v==='close'){ const d=rnd(38,62),a=side*(U.kind===1?rnd(.05,.4):rnd(.3,.9)); cam=[foot[0]+dir*d*Math.cos(a),U.kind===1?rnd(14,26):rnd(8,18),foot[2]+d*Math.sin(a)]; tgt=[(lip[0]+foot[0])*.5,H*.42,lip[2]]; fov=deg(50); }
+      /* Low over the stream, looking along it to the notch where it drops away, with the water beyond. */
+      else { cam=[lip[0]-dir*rnd(40,70),H+rnd(9,15),lip[2]+side*rnd(2,8)]; tgt=[lip[0]+dir*10,H-8,lip[2]]; fov=FOV_ANG; }
+    }
+    const dur=calm?rnd(35,60):rnd(5.5,8), len=(calm?rnd(.6,1.3):rnd(2.5,5))*dur*(v==='sea'||v==='across'?1:.6);
+    const dx=tgt[0]-cam[0], dz=tgt[2]-cam[2], hl=Math.hypot(dx,dz)||1, fwd=[dx/hl,dz/hl], lat=[-fwd[1],fwd[0]];
     /* Round the fall, toward it, or up. */
     const mv=pick(v==='lip'?['push']:['arc','arc','push','rise']);
-    const m=mv==='arc'?[lat[0]*side*len,0,lat[1]*side*len]:mv==='push'?[dir[0]*len*.6,rnd(-.05,.1)*len,dir[1]*len*.6]:[dir[0]*len*.15,len*.45,dir[1]*len*.15];
-    /* A longer lens from out at sea, so the fall fills about two fifths of the picture's height. */
-    const S={L,lightKey,kind:'angled',fall:v,noise:rnd(1000),fov:v==='sea'?deg(38):v==='close'?deg(50):FOV_ANG,steps:40,maxH:L.maxH,dur,start:0};
+    const m=mv==='arc'?[lat[0]*side*len,0,lat[1]*side*len]:mv==='push'?[fwd[0]*len*.6,rnd(-.05,.1)*len,fwd[1]*len*.6]:[fwd[0]*len*.15,len*.45,fwd[1]*len*.15];
+    const S={L,lightKey,kind:'angled',fall:v,noise:rnd(1000),fov,steps:40,maxH:L.maxH,dur,start:0};
     S.p0=[cam[0]-m[0]*.5,cam[1]-m[1]*.5,cam[2]-m[2]*.5]; S.p1=[cam[0]+m[0]*.5,cam[1]+m[1]*.5,cam[2]+m[2]*.5];
     const aim=p=>{ const x=tgt[0]-p[0],y=tgt[1]-p[1],z=tgt[2]-p[2]; return [Math.atan2(z,x),Math.atan2(y,Math.hypot(x,z))]; };
     const a0=aim(S.p0),a1=aim(S.p1);
     S.yaw0=a0[0]; S.yaw1=a0[0]+Math.atan2(Math.sin(a1[0]-a0[0]),Math.cos(a1[0]-a0[0])); S.pitch=a0[1]; S.pitch1=a1[1];
     S.nearH=maxGroundNear(L,cam[0],cam[2],380)+14;
-    /* Clear of the ground all the way, and inside the stretch of sea that is simulated. */
+    /* Clear of the ground all the way, and inside the stretch of water that is simulated. */
     let ok=true;
-    for(const u of [0,.25,.5,.75,1]){ const p=[0,1,2].map(k=>S.p0[k]+(S.p1[k]-S.p0[k])*u); if(p[1]<groundAt(L,p[0],p[2])+(v==='lip'?10:5)||p[1]<4||p[0]>xHi||p[2]<zLo||p[2]>zHi) ok=false; }
+    for(const u of [0,.25,.5,.75,1]){ const p=[0,1,2].map(k=>S.p0[k]+(S.p1[k]-S.p0[k])*u); if(p[1]<groundAt(L,p[0],p[2])+(v==='lip'?10:5)||p[1]<4||p[0]>xHi||p[0]<xLo||p[2]<zLo||p[2]>zHi) ok=false; }
     if(!ok) continue;
     if(!best) best=S;
     if(!sunWrong(S,sunOk,[0,.5,1])) return S;

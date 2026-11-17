@@ -6,7 +6,7 @@
    One mist puff alone is almost invisible; only many together read as white. ------ */
 const FS_SPRAY_STEP=HEAD+SIM_COMMON+`
 layout(location=0) out vec4 oP; layout(location=1) out vec4 oV;
-uniform sampler2D tP,tV,tBrk; uniform vec2 uBand; uniform int uRocky; uniform vec4 uFallFoot;
+uniform sampler2D tP,tV,tBrk; uniform vec2 uBand; uniform int uRocky; uniform vec4 uFallFoot; uniform float uPerK;
 vec3 h3(vec3 p){ p=fract(p*vec3(.1031,.1030,.0973)); p+=dot(p,p.yxz+33.33); return fract((p.xxy+p.yxx)*p.zyx); }
 void main(){
   ivec2 i=ivec2(gl_FragCoord.xy);
@@ -86,13 +86,13 @@ void main(){
     /* The foot of a waterfall (fallMeasure in js/world.js): mist billowing out from where the water lands,
        and heavy drops thrown up. About 150 puffs of mist and 300 drops are born a second: each puff is
        several metres across and nearly clear, and more of them made a solid grey ball. */
-    if(P.w<=0.&&uFallFoot.w>.5){
+    if(P.w<=0.&&uFallFoot.w>0.){
       vec3 qf=h3(r*517.+vec3(vec2(i)*.61,3.));
-      if(qf.x<.00013*min(uDt*60.,1.)){
+      if(qf.x<.00013*uPerK*uFallFoot.w*min(uDt*60.,1.)){
         vec3 q=h3(qf*271.+vec3(i.yx,9.)), q2=h3(q*191.+2.);
         float ang=6.2832*q.x, rad=4.5*sqrt(q.y);
         bool mist=q2.y<.33;
-        if(mist){ V.xyz=vec3(cos(ang)*(2.+4.*q2.x)+2.5,1.5+5.*q2.z,sin(ang)*(2.+4.*q2.x)); V.w=mix(.9,2.2,q.z); P.w=1.4+2.4*q2.x; }
+        if(mist){ V.xyz=vec3(cos(ang)*(2.+4.*q2.x)+2.5,1.5+5.*q2.z,sin(ang)*(2.+4.*q2.x)); V.w=mix(.5,1.3,q.z); P.w=1.2+2.*q2.x; }
         else { V.xyz=vec3(cos(ang)*(1.+3.*q2.z)+1.5,1.5+6.*q2.x*q2.x,sin(ang)*(1.+3.*q2.z)); V.w=mix(.04,.12,q.z*q.z); P.w=2.5; }
         P.xyz=uFallFoot.xyz+vec3(cos(ang)*rad-1.5,.3+2.5*q2.z,sin(ang)*rad);
       }

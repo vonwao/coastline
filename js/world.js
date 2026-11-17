@@ -20,7 +20,7 @@ function buildPrograms(){
   P('noise',FS_NOISE);P('noise3',FS_NOISE3);P('clouds',FS_CLOUDS);P('lace',FS_LACE);P('crown',FS_CROWN);P('rockH',FS_ROCKH);P('rockN',FS_ROCKN);P('plantBake',FS_PLANT_BAKE,VS_PLANT_BAKE);P('plantList',FS_PLANT_LIST);P('mesh',FS_MESH,VS_MESH);P('cards',FS_CARDS,VS_CARDS);P('spec',FS_SPEC);P('fft',FS_FFT);P('copy',FS_COPY);
   P('caus',FS_CAUS,VS_CAUS);P('sky',FS_SKY);FS_TERRAIN_KINDS.forEach((f,i)=>P('terrain'+i,f));P('terrainMix',FS_TERRAIN_MIX);P('lit',FS_LIT);P('grid',FS_GRID);
   P('simInit',FS_SIMINIT);P('simU',FS_SIMU);P('simH',FS_SIMH);P('simRM',FS_SIMRM);P('foam',FS_FOAM);
-  P('sprayStep',FS_SPRAY_STEP);P('spray',FS_SPRAY,VS_SPRAY);P('brk',FS_BRK);P('brkRow',FS_BRKROW);P('lip',FS_LIP,VS_LIP);P('viewZ',FS_VIEW_Z);P('viewA',FS_VIEW_A);P('viewB',FS_VIEW_B);P('viewC',FS_VIEW_C);P('viewW',FS_VIEW_W);P('label',FS_LABEL);P('bdown',FS_BDOWN);P('bup',FS_BUP);P('tone',FS_TONE);P('mix',FS_MIX);P('final',FS_FINAL);P('taa',FS_TAA);P('people',FS_PEOPLE,VS_PEOPLE);
+  P('sprayStep',FS_SPRAY_STEP);P('spray',FS_SPRAY,VS_SPRAY);P('brk',FS_BRK);P('brkRow',FS_BRKROW);P('lip',FS_LIP,VS_LIP);P('fall',FS_FALL,VS_FALL);P('viewZ',FS_VIEW_Z);P('viewA',FS_VIEW_A);P('viewB',FS_VIEW_B);P('viewC',FS_VIEW_C);P('viewW',FS_VIEW_W);P('label',FS_LABEL);P('bdown',FS_BDOWN);P('bup',FS_BUP);P('tone',FS_TONE);P('mix',FS_MIX);P('final',FS_FINAL);P('taa',FS_TAA);P('people',FS_PEOPLE,VS_PEOPLE);
   P('snd',FS_SND);
   if(REAL_COAST) P('terrainReal',FS_TERRAIN_REAL);
 }
@@ -125,7 +125,7 @@ const BOULDER_V=new URLSearchParams(location.search).get('boulders')==='1'?0:1;
 async function bakeTerrain(tex,type,seed,min,size,near,tiles,form=0,half=0,gentle=null,fall=null){
   const f=makeFBO(tex);
   const TP=form>=3?PR.terrainMix:PR['terrain'+type];
-  const U={tNoise:noiseTex,uMin:min,uSize:size,uSeed:seed,uType:type,uForm:form,uHalf:half,uNear:near?1:0,uTexel:size[0]/tex.w,uFall:fall?[fall.z,1,fall.x,0]:[0,0,0,0],...(form>=3?{uBoulderV:BOULDER_V}:{})};
+  const U={tNoise:noiseTex,uMin:min,uSize:size,uSeed:seed,uType:type,uForm:form,uHalf:half,uNear:near?1:0,uTexel:size[0]/tex.w,uFall:(fall=(Array.isArray(fall)?fall:[fall]).find(x=>x&&!x.far))?[fall.z,1,fall.x,0]:[0,0,0,0],...(form>=3?{uBoulderV:BOULDER_V}:{})};
   use(TP,U);
   gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.viewport(0,0,tex.w,tex.h);
   gl.enable(gl.SCISSOR_TEST);
@@ -182,7 +182,7 @@ function simUniforms(L){
   return {uDx:L.dx,uHmax:L.hmax,uTide:0,uT:L.t,uCells:[L.nx,L.nz],uDomMin:L.domMin,uSwK:L.swK,uSwA:L.swA,uSpongeN:44};
 }
 function setI2(P,name,v){ gl.useProgram(P.p); if(P.u[name]) gl.uniform2i(P.u[name].loc,v[0],v[1]); }
-function simVals(L,dt){ return {uFallFoot:L.fallU?L.fallU.foot:[0,0,0,0],uRockEta:L.type===2?1:0,uBreakD:Math.max(L.Hs*1.35,.5),uDx:L.dx,uDt:dt,uHmax:L.hmax,uTide:0,uT:L.t,uDomMin:L.domMin,uSwK:L.swK,uSwA:L.swA,uSpongeN:44}; }
+function simVals(L,dt){ return {uFallFoot:fallFoot(L),uRockEta:L.type===2?1:0,uBreakD:Math.max(L.Hs*1.35,.5),uDx:L.dx,uDt:dt,uHmax:L.hmax,uTide:0,uT:L.t,uDomMin:L.domMin,uSwK:L.swK,uSwA:L.swA,uSpongeN:44}; }
 function simPass(P,extra,L,dt,target){
   use(P,Object.assign(simVals(L,dt),extra)); setI2(P,'uCells',[L.nx,L.nz]);
   // use() leaves the program bound; textures are bound by this point.
@@ -214,7 +214,7 @@ function initSpray(L){
 }
 function sprayStep(L,dt){
   const i=L.si,o=1-i;
-  simPass(PR.sprayStep,{tS:L.s[0],tP:L.sp[i],tV:L.sv[i],tBrk:L.brk,uBand:Q.has('nobreakers')?[0,0]:[L.brkX0,L.brkX1],uRocky:L.kind==='rocky'?1:0},L,dt,L.spF[o]);
+  simPass(PR.sprayStep,{tS:L.s[0],tP:L.sp[i],tV:L.sv[i],tBrk:L.brk,uBand:Q.has('nobreakers')||L.water==='lake'?[0,0]:[L.brkX0,L.brkX1],uRocky:L.kind==='rocky'&&L.water!=='lake'?1:0,uPerK:65536/(SPRAY_N*SPRAY_N)},L,dt,L.spF[o]);
   L.si=o;
 }
 function rmPass(L){
@@ -257,24 +257,93 @@ function readGrid(L){
   L.gw=gw;L.gh=gh;
   gl.deleteFramebuffer(f); gl.deleteTexture(t);
 }
-/* A coast's waterfall (fall in js/scenes.js): where its stream leaves the cliff top (the lip) and where it
-   lands (the foot), read from the baked land along the stream's line. The view draws the falling water
-   from these (fallAt in js/shaders/view.js); spray and foam are made at the foot (js/shaders/spray.js,
-   FS_FOAM in js/shaders/sim.js). */
+/* A coast's waterfalls (fall in js/scenes.js: one, or a list): where each stream leaves the high ground (the
+   lip) and where it reaches the water (the foot), read from the baked land along the stream's line. The
+   view draws the falling water from these (fallAt in js/shaders/view.js); spray and foam are made at the
+   foot of the first one inside the simulated stretch (js/shaders/spray.js, FS_FOAM in js/shaders/sim.js).
+   Kinds: a fall over a cliff (the default), a cascade down a stair of steps, and a thread far off on a
+   mountainside (far: read from the far land; lipH: the height it starts at). Each comes out as
+   {A:[lip x, lip height, line z, 1], B:[foot x, foot height, about where the lip is, 0],
+    C:[direction of the water (+1 toward larger x), width, upstream length, kind 0/1/2], foot, inDomain}. */
+const FALL_KINDS={fall:0,cascade:1,thread:2};
 function fallMeasure(L){
-  L.fallU=null; const Fl=L.fall; if(!Fl) return;
-  const T=L.terr,f=makeFBO(T),row=Math.min(T.h-1,Math.max(0,Math.round((Fl.z-L.domMin[1])/L.domSize[1]*T.h)));
-  const a=new Float32Array(T.w*4); gl.readPixels(0,row,T.w,1,gl.RGBA,gl.FLOAT,a); gl.deleteFramebuffer(f);
-  const xOf=i=>L.domMin[0]+(i+.5)/T.w*L.domSize[0], H=i=>a[i*4], per=L.domSize[0]/T.w;
-  /* The foot: the first land met coming in from the sea. The top: the highest bed 45 to 90 m further in.
-     The lip: the first point going inland that is within 2.5 m of that height. */
-  let foot=-1; for(let i=T.w-1;i>0;i--) if(H(i)>.3){ foot=i; break; }
-  if(foot<0) return;
-  let top=0; for(let i=foot-Math.round(90/per);i<=foot-Math.round(45/per);i++) if(i>=0) top=Math.max(top,H(i));
-  let lip=foot; for(let i=foot;i>=0;i--) if(H(i)>=top-2.5){ lip=i; break; }
-  if(top<6) return;
-  L.fallU={A:[xOf(lip),H(lip),Fl.z,1],B:[xOf(foot),0,Fl.x,1],foot:[xOf(foot)+2.5,.3,Fl.z,1],drop:H(lip)};
+  L.falls=[];
+  const list=L.fall?Array.isArray(L.fall)?L.fall:[L.fall]:[];
+  for(const Fl of list){
+    const far=!!Fl.far, T=far?L.terrF:L.terr, min=far?L.farMin:L.domMin, size=far?[FAR_SPAN,FAR_SPAN]:L.domSize;
+    const f=makeFBO(T),row=Math.min(T.h-1,Math.max(0,Math.round((Fl.z-min[1])/size[1]*T.h)));
+    const a=new Float32Array(T.w*4); gl.readPixels(0,row,T.w,1,gl.RGBA,gl.FLOAT,a); gl.deleteFramebuffer(f);
+    const xOf=i=>min[0]+(i+.5)/T.w*size[0], iOf=x=>Math.round((x-min[0])/size[0]*T.w-.5), H=i=>a[i*4], per=size[0]/T.w;
+    const kind=FALL_KINDS[Fl.kind||'fall'];
+    let foot=-1,lip=-1,dir=1;
+    if(far){
+      /* Across the water: the first land beyond the simulated stretch, then up its slope to lipH. */
+      dir=-1;
+      for(let i=iOf(L.domMin[0]+L.domSize[0]);i<T.w;i++) if(H(i)>.3){ foot=i; break; }
+      if(foot>=0) for(let i=foot;i<T.w;i++) if(H(i)>=Fl.lipH){ lip=i; break; }
+    } else {
+      /* The foot: the first land met coming in from the water. The top: the highest bed win[0] to win[1] m
+         further in (45 to 90 by default). The lip: the first point going inland within 2.5 m of that. */
+      for(let i=T.w-1;i>0;i--) if(H(i)>.3){ foot=i; break; }
+      if(foot>=0){
+        const w=Fl.win||[45,90]; let top=0;
+        for(let i=foot-Math.round(w[1]/per);i<=foot-Math.round(w[0]/per);i++) if(i>=0) top=Math.max(top,H(i));
+        for(let i=foot;i>=0;i--) if(H(i)>=top-2.5){ lip=i; break; }
+        if(top<6) lip=-1;
+      }
+    }
+    if(foot<0||lip<0){ console.warn('[falls] no fall found on '+L.name+' at z '+Fl.z); continue; }
+    const fx=xOf(foot), inDomain=!far&&fx>L.domMin[0]&&fx<L.domMin[0]+L.domSize[0];
+    /* A fall over a cliff gets its water as a sheet in the air (fallPath, below). */
+    const geo=kind===0?fallPath(L,a,xOf,iOf,lip,foot,dir,Fl.z):null;
+    L.falls.push({kind,geo,A:[xOf(lip),H(lip),Fl.z,1],B:[fx,0,Fl.x??xOf(lip),0],C:[dir,kind===2?.9:kind===1?1.6:1,kind===2?30:250,kind],
+      foot:[fx+2.5*dir,.3,Fl.z,kind===1?.3:1],inDomain,drop:H(lip),far});
+  }
 }
+/* The path of a fall's water through the air (drawFalls in js/frame.js; VS_FALL in js/shaders/fall.js),
+   along the stream's line, from the land's heights there (a, one row of the land texture). It leaves the
+   cliff's edge (where the ground first drops 1.5 m below the lip) at 2.4 m/s and falls freely; where it
+   meets the rock it pours on down the face, keeping 30 cm off it, at the speed a sliding fall would
+   have, until it reaches the water. Each point keeps the time since the edge, and the stream's half
+   width there, which grows from 1.3 m as it falls. The ribbon's vertices: centre, direction of travel,
+   and (time, side -1 or +1, half width). */
+function fallPath(L,a,xOf,iOf,lip,foot,dir,z){
+  const H=x=>{ const f=(x-L.domMin[0])/L.domSize[0]*(a.length/4)-.5, i=Math.max(0,Math.min(a.length/4-2,Math.floor(f))), k=f-i; return a[i*4]*(1-k)+a[(i+1)*4]*k; };
+  let e=lip; while(e!==foot&&a[e*4]>a[lip*4]-1.5) e+=dir;
+  let x=xOf(e)-dir*.5, y=a[lip*4]+.3, vx=2.4, vy=0, t=0, y0=y, onRock=false;
+  const pts=[[x,y,t]], dt=.01;
+  for(let n=0;n<2000&&y>.05;n++){
+    if(!onRock){ vy-=9.81*dt; x+=dir*vx*dt; y+=vy*dt; t+=dt; if(y<H(x)+.3){ y=H(x)+.3; onRock=true; } }
+    else {
+      /* Pouring down the face: the speed of a fall from the top, slowed by the rock, along the slope. */
+      const sl=(H(x+dir*.3)-H(x-dir*.3))/.6, v=.6*Math.sqrt(vx*vx+2*9.81*Math.max(y0-y,0)), c=1/Math.sqrt(1+sl*sl);
+      x+=dir*v*c*dt; t+=dt; const yn=H(x)+.3;
+      /* Off a ledge it falls free again. */
+      if(yn<y-v*dt*1.5){ onRock=false; vy=-v*Math.sqrt(1-c*c); vx=v*c; } else y=yn;
+    }
+    if(n%3===0) pts.push([x,Math.max(y,0),t]);
+    if(dir*(x-xOf(foot))>3) break;
+  }
+  pts.push([x,0,t]);
+  if(pts.length<4) return null;
+  const d=new Float32Array(pts.length*2*9);
+  pts.forEach((p,i)=>{
+    const q=pts[Math.min(i+1,pts.length-1)], r=pts[Math.max(i-1,0)], tg=[q[0]-r[0],q[1]-r[1],0];
+    const hw=Math.min(1.3+.75*p[2],4.6);
+    for(const s of [-1,1]){ d.set([p[0],p[1],z, tg[0],tg[1]||-1e-3,tg[2], p[2],s,hw],(i*2+(s>0?1:0))*9); }
+  });
+  const vao=gl.createVertexArray(), buf=gl.createBuffer();
+  gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER,buf); gl.bufferData(gl.ARRAY_BUFFER,d,gl.STATIC_DRAW);
+  for(let k=0;k<3;k++){ gl.enableVertexAttribArray(k); gl.vertexAttribPointer(k,3,gl.FLOAT,false,36,k*12); }
+  gl.bindVertexArray(emptyVAO); gl.bindBuffer(gl.ARRAY_BUFFER,null);
+  return {vao,buf,n:pts.length*2,time:t};
+}
+/* The falls as the shaders take them: two at most. */
+function fallUniforms(L){
+  const F=(L.falls||[]).slice(0,2), u=k=>[0,1].flatMap(i=>F[i]?F[i][k]:[0,0,0,0]);
+  return {uFallA:u('A'),uFallB:u('B'),uFallC:u('C')};
+}
+function fallFoot(L){ const F=(L.falls||[]).find(f=>f.inDomain); return F?F.foot:[0,0,0,0]; }
 function groundAt(L,x,z){
   const u=Math.min(Math.max((x-L.domMin[0])/L.domSize[0],0),.9999)*(L.gw-1), v=Math.min(Math.max((z-L.domMin[1])/L.domSize[1],0),.9999)*(L.gh-1);
   const i=Math.floor(u),j=Math.floor(v),a=u-i,b=v-j,G=L.grid,w=L.gw;
@@ -368,7 +437,8 @@ async function buildLocation(L,progress,gentle=null){
   if(soft()) await nextFrame();
   rmPass(L);
   /* Spray: off rock on rocky coasts, and off breaking crests everywhere but the lake. */
-  if(L.water!=='lake') initSpray(L);
+  /* (The lake has spray only where a waterfall lands in it.) */
+  if(L.water!=='lake'||L.falls.some(f=>f.inDomain)) initSpray(L);
   L.dtStep=1/60; L.phase='';
   L.builtAt=performance.now();
   L.ready=true;
@@ -395,6 +465,8 @@ function freeLocation(L){
   for(const k of ['s','fx','adv','sp','sv']){ if(L[k]) L[k].forEach(t=>gl.deleteTexture(t)); L[k]=null; }
   for(const k of ['litF','litFF','rmF','brkF','brkRowF']){ if(L[k]) gl.deleteFramebuffer(L[k]); L[k]=null; }
   for(const k of ['sf','ff','spF']){ if(L[k]) L[k].forEach(f=>gl.deleteFramebuffer(f)); L[k]=null; }
+  for(const F of L.falls||[]) if(F.geo){ gl.deleteVertexArray(F.geo.vao); gl.deleteBuffer(F.geo.buf); }
+  L.falls=[];
   L.grid=L.gridI=L.gridR=null; L.litKey=null; L.litObj=null; L.shownAt=0;
 }
 /* Build a coast if it isn't built: one at a time, in the order asked. gentle: behind the running picture.

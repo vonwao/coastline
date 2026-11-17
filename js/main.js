@@ -80,7 +80,7 @@ async function main(){
   const first=pick(firsts.length?firsts:list), lk=LIVE.on?LIVE.key:undefined;
   /* A ready-made scene (?preset=, js/presets.js) or a recipe (?recipe=, or the studio's last scene) comes
      first, if there is one (js/recipe.js). Its plants are baked while the view shader may still compile. */
-  const S=reelFirst()||presetFirst()||recipeFirst()||(FALL_ONLY&&first.fallU?makeFallShot(first,pick(first.lights.filter(k=>k!=='storm')),CALM):null)||(CALM?makeCalmShot(first,lk):makeShot(first,lk)); bakeLit(S.L,S.lightKey); S.t=0;
+  const S=reelFirst()||presetFirst()||recipeFirst()||(FALL_ONLY&&first.falls&&first.falls.length?makeFallShot(first,pick(first.lights.filter(k=>k!=='storm')),CALM):null)||(CALM?makeCalmShot(first,lk):makeShot(first,lk)); bakeLit(S.L,S.lightKey); S.t=0;
   bar(.99,'Growing the plants');
   await vegBake(vegOf(S)); vegRefresh(S);
   /* The view shader may still be compiling. Say so, with the time it took last time (kept in this browser),

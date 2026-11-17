@@ -59,7 +59,7 @@ const LOCATIONS=[
   {name:'Broken coast',veg:'northwest',cover:'dense',kind:'rocky',type:2,form:4,seed:9.6,dx:.8,nx:700,nz:1100,xMin:-190,hmax:5.5,Hs:2.6,T:10.5,obl:-9,maxH:380,lights:['morning','late','golden','moody','storm','highSun']},
   {name:'Palm cove',veg:'hawaii',cover:'dense',kind:'rocky',water:'tropical',flora:0,type:2,form:5,seed:6.7,dx:.8,nx:620,nz:1050,xMin:-230,hmax:2.8,Hs:.42,T:7.5,obl:8,maxH:300,lights:['highSun','morning','late','golden','moody']},
   /* An experiment: a mountain lake, with small wind-driven waves and snow on the peaks (snow: snowline in metres). */
-  {name:'Alpine lake',cover:'dense',kind:'rocky',water:'lake',flora:3,spread:80,farLod:1,slopeK:2.5,farStep:.03,marchK:10,type:2,form:6,seed:4.9,dx:.6,nx:600,nz:1000,xMin:-160,hmax:4.,Hs:.16,T:2.8,obl:4,maxH:2700,snow:1250,fish:.25,lights:['morning','highSun','late','golden','moody'],
+  {name:'Alpine lake',fall:[{z:-150,x:-130,kind:'cascade',win:[60,100]},{z:300,kind:'thread',far:true,lipH:760}],cover:'dense',kind:'rocky',water:'lake',flora:3,spread:80,farLod:1,slopeK:2.5,farStep:.03,marchK:10,type:2,form:6,seed:4.9,dx:.6,nx:600,nz:1000,xMin:-160,hmax:4.,Hs:.16,T:2.8,obl:4,maxH:2700,snow:1250,fish:.25,lights:['morning','highSun','late','golden','moody'],
    /* Deep in its valley the lake goes nearly black after the sun is well down, unless the moon is up. */
    todOff:['dusk','starry']},
 ];

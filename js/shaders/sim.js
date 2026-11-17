@@ -169,7 +169,7 @@ void main(){
   /* Where a waterfall lands (fallMeasure in js/world.js) the sea is churned white, and the foam drifts off
      with the water like any other. */
   float fallK=0.;
-  if(uFallFoot.w>.5){ vec2 df=wp-uFallFoot.xz; fallK=exp(-dot(df,df)/26.)*smoothstep(.005,.08,h); gen+=fallK*2.6*(.6+.8*fineN); }
+  if(uFallFoot.w>0.){ vec2 df=wp-uFallFoot.xz; fallK=exp(-dot(df,df)/26.)*smoothstep(.005,.08,h)*uFallFoot.w; gen+=fallK*2.6*(.6+.8*fineN); }
   float foam=f.r;
   foam*=exp(-clamp(div,-1.2,1.2)*uDt*.75);
   float dec=uDecay*(.6+1.2*fineN+.9*smoothstep(.55,.25,patchN));

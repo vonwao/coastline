@@ -201,6 +201,23 @@ function drawMeshes(S,cam,asp,Li,dA,dB){
    grid, where the camera can see the sea within 320 m, inside the strip where waves break. A first pass
    lists the marked cells of each row in view, so only those are drawn. Drawn over the water with depth
    testing, leaving no depth of their own, like spray. */
+/* A waterfall's water as a sheet in the air (js/shaders/fall.js; its path: fallPath in js/world.js).
+   Over what is drawn, testing depth and leaving none. Where it covers the picture it also lowers the
+   alpha that tells the live smoothing (FS_TAA) what is water, as falling water moves too fast to smooth. */
+function drawFalls(S,cam,asp,Li,dA,dB){
+  const L=S.L;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,RT.hdrA.f); gl.viewport(0,0,RT.w,RT.h);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false);
+  gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE,gl.ONE_MINUS_SRC_ALPHA,gl.ZERO,gl.ONE_MINUS_SRC_ALPHA);
+  use(PR.fall,{tLit:L.lit,tEnv:Li.env,tNoise:noiseTex,uDomMin:L.domMin,uDomSize:L.domSize,uJit:renderJit,uTime:L.t,uTan:cam.tan,uAspect:asp,uDA:dA,uDB:dB,uFogB:fogOf(S,Li),
+    uCloudShade:Li.cloudShade,uCloudT:S.t||0,uCldCover:Li.cover??.4,uCldSeed:Li.seed??0,uRo:cam.ro,uR:cam.R,uU:cam.Up,uF:cam.F,uSun:Li.sun,uSunE:Li.sunE,uSide:[0,0,1]});
+  /* The sheet, then its veil of spray in front (js/shaders/fall.js). */
+  for(const layer of [0,1]) for(const F of L.falls){ if(!F.geo) continue;
+    gl.uniform1f(PR.fall.u.uLayer.loc,layer); gl.uniform1f(PR.fall.u.uDir.loc,F.C[0]);
+    gl.bindVertexArray(F.geo.vao); gl.drawArrays(gl.TRIANGLE_STRIP,0,F.geo.n); }
+  gl.bindVertexArray(emptyVAO);
+  gl.disable(gl.BLEND); gl.depthMask(true);
+}
 function drawBreakers(S,cam,asp,Li,dA,dB){
   const L=S.L,R=320;
   let x0=cam.ro[0],x1=x0,z0=cam.ro[2],z1=z0;
@@ -275,7 +292,7 @@ function renderHDR(S,u){
     uSun:Li.sun,uSunE:Li.sunE,uSigA:W.sigA,uSigS:W.sigS,uSed:W.sed,uSandA:W.sandA,uSandB:W.sandB,uSandPatch:W.sandPatch,uType:L.type,uFlora:flora,uGreenD:greenD,uPlantCover:cover,uMixed:L.water?1:0,uRockAng:rockAngle(L),uGranite:L.form===5?1:0,uSnow:L.snow||0,uFarLod:L.farLod??4,uSlopeK:L.slopeK||1.6,uFarStep:L.farStep||.22,uFish:Q.has('nofish')||S.opt?.fish===false?0:L.fish??((L.kind==='tropical'||L.water==='tropical')?1:.35),
     uSwK:L.swK,uSwA:L.swA,uWA:fA,uWB:fB,uFogB:fogOf(S,Li),uCloudShade:Li.cloudShade,uSunVis:Li.sunVis??1,uCloudT:S.t||0,uCldCover:Li.cover??.4,uCldSeed:Li.seed??0,uDA:dA,uDB:dB,uCardD:cardD,uCardS:cardD>0?SHRUB_RANGE:0,uShrubM:[plantInfo[12],plantInfo[13],plantInfo[14],plantInfo[15]],
     tExtra:LABEL?L.s[0]:clouds?RT.cloud.t:Li.envC,uCloudPx:clouds?1:0,uLabel:LABEL,uStars:Li.stars||0,uMoonSun:Li.moonSun||[0,-1,0],uMoonLit:Li.moonLit||0,uMoonK:Li.moonK||0,...(LABEL?PEOPLE_OFF:peopleUniforms(S,cam)),...vegUniforms(),
-    uFallA:L.fallU?L.fallU.A:[0,0,0,0],uFallB:L.fallU?L.fallU.B:[0,0,0,0],tGA0:RT.g.a0,tGA1:RT.g.a1,tGB0:RT.g.b0,tGB1:RT.g.b1,tZ:RT.z.t,uConeK:4,uPre:PREMARCH&&!LABEL?1:0};
+    ...fallUniforms(L),tGA0:RT.g.a0,tGA1:RT.g.a1,tGB0:RT.g.b0,tGB1:RT.g.b1,tZ:RT.z.t,uConeK:4,uPre:PREMARCH&&!LABEL?1:0};
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.ALWAYS); gl.depthMask(true);
   /* Answer images show the ground and water only: plants and spray are left out. */
   if(LABEL){ use(PR.label,U); drawTo(RT.hdrA.f); gl.disable(gl.DEPTH_TEST); return; }
@@ -309,6 +326,7 @@ function renderHDR(S,u){
   /* People on the beach, umbrellas and cool boxes (js/people.js). */
   gl.depthFunc(gl.LEQUAL); drawPeople(S,cam,asp,Li,dA,dB);
   if(L.brk&&!Q.has('nobreakers')&&S.opt?.breakers!==false) drawBreakers(S,cam,asp,Li,dA,dB);
+  if(L.falls&&L.falls.some(F=>F.geo)&&!Q.has('nofallsheet')) drawFalls(S,cam,asp,Li,dA,dB);
   if(L.sp&&!Q.has('nospray')&&S.opt?.spray!==false){
     /* Spray goes over everything already drawn, and leaves no mark in the depth buffer. */
     gl.depthFunc(gl.LEQUAL); gl.depthMask(false);
@@ -413,7 +431,7 @@ function chooseNext(prev,ahead){
      fall: always a shot of it, in one of the coast's own daytime lights, whatever the clock or the weather
      being followed says. (A first version kept to the followed light: opened at nine in the evening by a
      browser following the clock, it showed no fall at all.) */
-  const F=L.fallU&&(FALL_ONLY||(Math.random()<.3&&!(lk&&dimLight(lk))))?makeFallShot(L,FALL_ONLY?pick(L.lights.filter(k=>k!=='storm')):lk,CALM):null;
+  const F=L.falls&&L.falls.length&&(FALL_ONLY||(Math.random()<.3&&!(lk&&dimLight(lk))))?makeFallShot(L,FALL_ONLY?pick(L.lights.filter(k=>k!=='storm')):lk,CALM):null;
   const S=F||(CALM?makeCalmShot(L,lk):makeShot(L,lk,kind));
   /* (Made ahead, its light is baked when its plants are listed, or at the cut.) */
   if(!ahead) bakeLit(L,S.lightKey);

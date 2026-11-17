@@ -196,8 +196,11 @@ vec4 rockyRaw(vec2 p){
   int form=uForm;
   float hk; float coast=170.*(fbm(vec2(q.y/640.,uSeed),4)-.5)*(form==2?.6:1.)+farBend(p.y,.7,hk);
   float cove=form==1?exp(-pow((p.y-60.)/72.,2.)):0.;
-  float d=p.x-coast+58.*(fbm(q/88.,4)-.5)+15.*(ridged(q/27.,4)-.45)+58.*cove;
-  if(form==0) d+=26.*(ridged(q/46.,3)-.42);
+  /* The cliff line. Ridged noise alone gave it knife-edged salients every few tens of metres, which stood
+     up from the sea as rows of pointed pinnacles (the author, 16 November: the cliffs "don't look great"). Mostly
+     rounded now, with a little of the sharpness kept. */
+  float d=p.x-coast+58.*(fbm(q/88.,4)-.5)+11.*(fbm(q/27.,4)-.5)+5.*(ridged(q/27.,4)-.45)+58.*cove;
+  if(form==0) d+=20.*(fbm(q/46.,3)-.5)+8.*(ridged(q/46.,3)-.42);
   /* Tilted beds of rock: each has a long gentle back and a short steep front. */
   float ang=(form==2?.82:.34)+uSeed*.37; vec2 sv=vec2(cos(ang),sin(ang));
   float warp=16.*(fbm(q/70.,3)-.5)+3.5*(fbm(q/15.,3)-.5);
@@ -229,7 +232,8 @@ vec4 rockyRaw(vec2 p){
     float W=C*(.55+.75*fbm(q/40.,3))+2.;
     float prof=smoothstep(0.,W,-d);
     h=.55+ledge*(1.-prof)+C*pow(prof,.82);
-    h+=prof*prof*(4.*ridged(q/43.,uNear>.5?5:3));
+    /* The top: gently rolling, as bedded rock weathers, rather than a crest of spikes. */
+    h+=prof*prof*(2.6*fbm(q/43.,uNear>.5?5:3)+1.1*ridged(q/43.,uNear>.5?5:3));
     h+=smoothstep(-200.,-2200.,d)*96.*fbm(q/650.,5)+headHills(q,d,hk);
     /* The stream's bed: a gully across the cliff top, deepest in a notch at the lip, and a shallow chute
        down the face. Nothing grows in it. */
@@ -282,11 +286,13 @@ vec4 rockyRaw(vec2 p){
   if(h>1.5&&veg<.5){
     /* The ledges' height and how stepped a face is vary along the coast: every face stepped alike, every
        3.1 m, read as stacked plates up close. */
-    float st=(form==2?1.9:3.1)*(.72+.62*fbm(q/140.,2)), tilt=dot(q,sv)*.055;
-    float xs=(h+tilt)/st;
-    float xt=(floor(xs)+smoothstep(0.,.55,fract(xs)))*st-tilt;
+    /* The beds' thickness also varies with height, so they don't repeat like a stack of plates. */
+    float tilt=dot(q,sv)*.055, wv=1.5*sin(h*.37+1.1)+.8*sin(h*1.09+2.3);
+    float st=(form==2?1.9:3.1)*(.72+.62*fbm(q/140.,2));
+    float xs=(h+tilt+wv)/st;
+    float xt=(floor(xs)+smoothstep(0.,.55,fract(xs)))*st-tilt-wv;
     h=mix(h,xt,min(.72*(.5+1.*fbm(q/230.+4.,2)),.88)*smoothstep(1.5,3.5,h)*(1.-veg));
-    if(form==0){ float xb=(h+tilt)/11.5; float xu=(floor(xb)+smoothstep(0.,.62,fract(xb)))*11.5-tilt; h=mix(h,xu,.5*smoothstep(4.,9.,h)*(1.-veg)); }
+    if(form==0){ float wb=4.*sin(h*.11+.4); float xb=(h+tilt+wb)/11.5; float xu=(floor(xb)+smoothstep(0.,.62,fract(xb)))*11.5-tilt-wb; h=mix(h,xu,.5*smoothstep(4.,9.,h)*(1.-veg)); }
   }
   h+=rel.y*mix(.34,1.,smoothstep(1.,5.,hIn))*smoothstep(-3.2,.4,hIn)*vK*mix(1.,.12,wall);
   /* Pale sand collects in the low parts of the reef. */
@@ -315,6 +321,9 @@ in vec2 vUV; layout(location=0) out vec4 o; uniform vec2 uMin,uSize; uniform flo
 /* uBoulderV: 1, Palm cove's reshaped boulders (the default since 8 November); 0, the old smooth domes
    (?boulders=1). */
 uniform float uBoulderV;
+/* A coast's waterfall, as in FS_TERRAIN above. */
+uniform vec4 uFall;
+float fallZ(float x){ return uFall.x+5.*sin((x-uFall.z)*.05)*smoothstep(-20.,-80.,x-uFall.z); }
 /* Noise from the baked texture: as good for shapes this size, and it keeps the shader small. Full
    noise functions get unrolled by the D3D compiler, and this shader took a minute to compile with them. */
 float fa(vec2 p){ return textureLod(tNoise,p/4.,0.).r; }
@@ -500,6 +509,21 @@ vec4 mixedCoast(vec2 p){
       if(uNear>.5) bh=max(boulders(q,11.,3.,8.5,dens*.7,g0,51.),boulders(q+3.7,5.2,1.2,3.2,dens*(uBoulderV>.5?.4:.56),g0,83.));
       else bh=g0+dens*2.4;
       if(bh>h){ float up=bh-g0; h=bh; sand*=uNear>.5?1.-smoothstep(.05,.3,up):1.-.55*smoothstep(.1,.7,dens); veg*=1.-smoothstep(.3,1.2,up); }
+    }
+  }
+  /* A cascade (the Alpine lake's): its stream bed cut into the slope as a stair of rock steps, each about
+     8 m high, with a short run between, so the water drops, pools and drops again on its way to the lake.
+     The steps follow the slope's contours. Below 8 m the bed is under the lake's level, a narrow inlet. */
+  if(uFall.y>.5&&d<0.){
+    float fz=p.y-fallZ(p.x), u=-d;
+    float fk=exp(-fz*fz/mix(14.,40.,smoothstep(0.,120.,u)))*(1.-smoothstep(150.,230.,u))*smoothstep(1.,6.,u);
+    /* Trees keep about 9 m back from the water, so the cascade isn't hidden in the forest. */
+    float vk=exp(-fz*fz/150.)*(1.-smoothstep(150.,230.,u));
+    veg*=1.-vk;
+    if(fk>.002){
+      const float ST=8.;
+      float hs=(floor(h/ST)+pow(fract(h/ST),10.))*ST;
+      h=mix(h,hs-1.6,fk); sand*=1.-fk;
     }
   }
   float rockK=1.-sand;
