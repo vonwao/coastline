@@ -245,6 +245,11 @@ vec4 rockyRaw(vec2 p){
     }
     float inl=smoothstep(W+5.,W+24.,-d+12.*(fbm(q/31.,3)-.5));
     veg=inl*(.42+.92*fbm(q/23.,4))*(1.-fk);
+    /* Plants in patches right up to the cliff's edge, where it was bare rock for the first 5 to
+       24 m (the author, 16 November: "the trees on the cliffs don't look great"): from the water the edge now has
+       trees and cypresses along it, not a few pines standing back from it. */
+    float rim=smoothstep(W-1.,W+5.,-d+4.*(fbm(q/17.,3)-.5))*smoothstep(.36,.6,fbm(q/13.,3));
+    veg=max(veg,rim*.75*(1.-fk));
     h+=veg*(.3+.5*fbm(q/7.,3));
     float bs=smoothstep(.4,.8,cove)*smoothstep(-36.,-12.,d);
     if(bs>0.){ sand=bs; h=mix(h,1.5*(1.-exp(d/10.)),bs); }
