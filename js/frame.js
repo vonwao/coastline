@@ -289,7 +289,7 @@ function renderHDR(S,u){
     uDomMin:L.domMin,uDomSize:L.domSize,uFarMin:L.farMin,uFarSize:[FAR_SPAN,FAR_SPAN],uDx:L.dx,uEdge:.06,uMaxH:S.maxH,uNearH:S.nearH,
     uTide:0,uSimT:L.t,uTime:L.t,uChop:W.chop,uSwH:L.Hs*.6,
     tTerr:L.terr,tTerrF:L.terrF,tLit:L.lit,tLitF:L.litFar,tRM0:L.rm0,tRM1:L.rm1,tFx:L.fx[L.fi],tAdv:L.adv[L.fi],tFFT:fftFinal,tCaus:causTex,tEnv:Li.env,tNoise:noiseTex,tLace:laceTex,tRock:rockTex,tCrown:crownTex[flora===0?1:0],
-    uSun:Li.sun,uSunE:Li.sunE,uSigA:W.sigA,uSigS:W.sigS,uSed:W.sed,uSandA:W.sandA,uSandB:W.sandB,uSandPatch:W.sandPatch,uType:L.type,uFlora:flora,uGreenD:greenD,uPlantCover:cover,uMixed:L.water?1:0,uRockAng:rockAngle(L),uGranite:L.form===5?1:0,uSnow:L.snow||0,uFarLod:L.farLod??4,uSlopeK:L.slopeK||1.6,uFarStep:L.farStep||.22,uFish:Q.has('nofish')||S.opt?.fish===false?0:L.fish??((L.kind==='tropical'||L.water==='tropical')?1:.35),
+    uSun:Li.sun,uSunE:Li.sunE,uSigA:W.sigA,uSigS:W.sigS,uSed:W.sed,uSandA:W.sandA,uSandB:W.sandB,uSandPatch:W.sandPatch,uType:L.type,uFlora:flora,uGreenD:greenD,uPlantCover:cover,uMixed:L.water?1:0,uRockAng:rockAngle(L),uGranite:L.rock==='granite'?1:0,uRockTone:L.rockTone||[1,1,1],uSnow:L.snow||0,uFarLod:L.farLod??4,uSlopeK:L.slopeK||1.6,uFarStep:L.farStep||.22,uFish:Q.has('nofish')||S.opt?.fish===false?0:L.fish??((L.kind==='tropical'||L.water==='tropical')?1:.35),
     uSwK:L.swK,uSwA:L.swA,uWA:fA,uWB:fB,uFogB:fogOf(S,Li),uCloudShade:Li.cloudShade,uSunVis:Li.sunVis??1,uCloudT:S.t||0,uCldCover:Li.cover??.4,uCldSeed:Li.seed??0,uDA:dA,uDB:dB,uCardD:cardD,uCardS:cardD>0?SHRUB_RANGE:0,uShrubM:[plantInfo[12],plantInfo[13],plantInfo[14],plantInfo[15]],
     tExtra:LABEL?L.s[0]:clouds?RT.cloud.t:Li.envC,uCloudPx:clouds?1:0,uLabel:LABEL,uStars:Li.stars||0,uMoonSun:Li.moonSun||[0,-1,0],uMoonLit:Li.moonLit||0,uMoonK:Li.moonK||0,...(LABEL?PEOPLE_OFF:peopleUniforms(S,cam)),...vegUniforms(),
     ...fallUniforms(L),tGA0:RT.g.a0,tGA1:RT.g.a1,tGB0:RT.g.b0,tGB1:RT.g.b1,tZ:RT.z.t,uConeK:4,uPre:PREMARCH&&!LABEL?1:0};
@@ -513,6 +513,11 @@ function cutTo(S,fadeDur,resize){
   if(fadeDur>0){ rhythmCut(S,!!resize,state.cur); state.next=S; state.fadeDur=fadeDur; state.fade=0; }
   else { rhythmLearn(state.cur); rhythmCut(S,true); state.cur=S; state.next=null; state.dtAvg=1000/capFor(S); }
 }
+/* A copy of the picture just drawn, for whoever asked (state.grab). The page's canvas keeps its picture
+   only until the browser shows it, so the copy is taken here, straight after drawing, and not in a frame
+   of its own: at 30 or 20 a second, a frame of the browser's can pass with nothing drawn, and a copy taken
+   then is blank (half the first ratings' pictures were). */
+function grabNow(){ const g=state.grab; if(!g) return; state.grab=null; try{ g(canvas); }catch(e){ console.warn('[grab] '+e.message); } }
 function frame(now){
   requestAnimationFrame(frame);
   /* 30 a second is every second refresh of a 60 Hz display, 20 every third; the small allowance keeps
@@ -521,7 +526,8 @@ function frame(now){
   if(cap<45&&now-state.last<(cap<25?46:29)) return;
   const elapsed=Math.min((now-state.last)/1000,.25); state.last=now;
   if(elapsed>0&&elapsed<.25) state.dtAvg+=(elapsed*1000-state.dtAvg)*.06;
-  if(state.paused) { return; }
+  /* A picture asked for while stopped (the rating's, js/rate.js): the last frame is shown again for it. */
+  if(state.paused){ if(state.grab&&state.lastTex){ use(PR.final,{tI:state.lastTex,uTx:[1/RT.w,1/RT.h],uTime:simTime%FFT_P,uSharp:state.scale<.99?.34:.2,uNoFxaa:TAA_ON?1:0}); drawTo(null,canvas.width,canvas.height); grabNow(); } return; }
   rhythmBegin(now);
   simTime+=elapsed;
   stepFFT(simTime);
@@ -570,6 +576,7 @@ function frame(now){
     }
   }
   use(PR.final,{tI:finalTex,uTx:[1/RT.w,1/RT.h],uTime:simTime%FFT_P,uSharp:state.scale<.99?.34:.2,uNoFxaa:TAA_ON?1:0}); drawTo(null,canvas.width,canvas.height);
+  state.lastTex=finalTex; grabNow();
   soundUpdate(state.next&&state.fade>.5?state.next:state.cur);
   /* Scene changes */
   /* The studio, or one recipe (?recipe=): the shot loops instead of changing. */

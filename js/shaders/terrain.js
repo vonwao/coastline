@@ -550,6 +550,10 @@ vec4 mixedCoast(vec2 p){
   }
   h+=rel.y*mix(.34,1.,smoothstep(1.,5.,hIn))*smoothstep(-3.2,.4,hIn)*vK*mix(1.,.12,wall);
   if(d>=0.) sand=max(sand,smoothstep(-1.4,-3.2,h)*smoothstep(.42,.58,fa(q/34.)));
+  /* Around the alpine lake only the narrow shore is gravel. Above it, ground with neither trees nor a
+     steep slope was left marked as sand, and every gentle hump on the bare mountains showed as a pale
+     beach-coloured spot ("mountains & snow don't look natural", 18 November). It is rock and scree. */
+  if(uForm==6) sand*=1.-smoothstep(4.,12.,h);
   return vec4(h,0.,veg,sand);
 }
 void main(){

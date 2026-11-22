@@ -50,13 +50,15 @@ function saveRatings(a){ try{ localStorage.setItem(RATE_KEY,JSON.stringify(a)); 
   const describe=S=>`${S.L.name} · ${S.fall?'waterfall':S.kind} · ${LIGHTS[S.lightKey]?.label||S.lightKey}`;
   let cur=null, wasPaused=false, view='rate';
 
-  /* A small picture of the scene on screen. The picture is only there just after a frame is drawn, so it is
-     taken in the next frame, after the simulation has drawn it. */
+  /* A small picture of the scene on screen, copied straight after the next frame is drawn (grabNow in
+     js/frame.js). If none comes within 6 seconds (the page can be busy just after it opens), the rating is kept without one. */
   function snap(){
-    return new Promise(res=>requestAnimationFrame(()=>{
-      try{ const w=320,h=Math.round(w*canvas.height/canvas.width), c=document.createElement('canvas'); c.width=w; c.height=h;
-        c.getContext('2d').drawImage(canvas,0,0,w,h); res(c.toDataURL('image/jpeg',.72)); }catch(e){ res(''); }
-    }));
+    return new Promise(res=>{
+      const t=setTimeout(()=>{ state.grab=null; res(''); },6000);
+      state.grab=cv=>{ clearTimeout(t);
+        try{ const w=320,h=Math.round(w*cv.height/cv.width), c=document.createElement('canvas'); c.width=w; c.height=h;
+          c.getContext('2d').drawImage(cv,0,0,w,h); res(c.toDataURL('image/jpeg',.72)); }catch(e){ res(''); } };
+    });
   }
   /* What is kept of a scene: its recipe, and what it is, in words. */
   function sceneOf(S){

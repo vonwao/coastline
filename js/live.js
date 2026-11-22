@@ -115,9 +115,14 @@ function skyLight(D,seed){
     const up=D.moonEl>.5, mk=up?D.lit*smooth(.5,12,D.moonEl):0;
     Li=Object.assign(skyLook(up?Math.max(D.moonEl,4.5):30),{el:up?Math.max(D.moonEl,.6):35,az:up?D.moonAz:D.sunAz+180});
     /* With less moon the eye adapts further, but not all the way: a moonless night is darker than a
-       moonlit one, though the surf still shows. */
-    Li.sunK=mk; Li.skyK=.16+.14*mk; Li.night=1; Li.starK=1-.55*mk;
-    Li.exposure*=.42*Math.pow(1.12/(mk+.12),.7); Li.cloudShade=0; Li.moon=mk;
+       moonlit one, though the surf still shows. Even under a full moon it is night: the author, 18 November,
+       on a moonlit beach, "everything looks too light for night (even if were a full moon)". Moonlight
+       is about a 400,000th of sunlight; the eye makes up much of that, not all, so a moonlit scene is
+       drawn at about a third of the brightness it had (.42 to .27 here, the sea and sand darker still
+       through the tone curve), and the moon's glitter path and the surf are what stand out. Few stars
+       show near a bright moon (starK). */
+    Li.sunK=mk; Li.skyK=.16+.14*mk; Li.night=1; Li.starK=1-.8*mk;
+    Li.exposure*=(.42-.15*mk)*Math.pow(1.12/(mk+.12),.7); Li.cloudShade=0; Li.moon=mk;
     /* For drawing the moon's phase: where the real sun is (below the horizon), which side of the moon
        it lights, and how much of the moon is lit. */
     if(up){ Li.moonSun=sunVec({el:D.sunEl,az:D.sunAz}); Li.moonLit=Math.max(D.lit,.001); }

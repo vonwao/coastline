@@ -42,8 +42,8 @@ const SCHEMA=[
       desc:'Height of the drone above sea level, at the middle of the path. It is always kept a few metres clear of the ground. In a crossing, the height follows the trees and the ground, and this is how high it flies over the sand.'},
     {id:'camera.heading',label:'Heading',unit:'°',min:-180,max:180,step:1,applies:'instant',
       desc:'Which way the camera faces: 0 out to sea, 180 toward the land, +90 and -90 along the coast. In a straight-down shot it is the direction at the top of the picture.'},
-    {id:'camera.pitch',label:'Looking down',unit:'°',min:0,max:89,step:.5,applies:'instant',notFor:['top'],
-      desc:'How steeply the camera looks down below the horizon. Straight-down shots always look down 90°.'},
+    {id:'camera.pitch',label:'Looking down',unit:'°',min:-30,max:89,step:.5,applies:'instant',notFor:['top'],
+      desc:'How steeply the camera looks down below the horizon; below 0 it looks up, as at a waterfall from its foot. Straight-down shots always look down 90°.'},
     {id:'camera.fov',label:'Field of view',unit:'°',min:20,max:90,step:1,applies:'instant',
       desc:'How wide the lens is, top to bottom. Smaller is a zoom, larger a wide angle.'},
     {id:'camera.speed',label:'Speed',unit:'m/s',min:0,max:30,step:.1,applies:'instant',
@@ -196,7 +196,7 @@ function setCamKnobs(S,k){
   const K=Object.assign(camKnobs(S),k), L=S.L;
   const c=[shoreAt(L,K.along)+K.offshore,K.height,K.along];
   S.yaw0=K.heading*RAD; S.yaw1=S.yaw0+K.turn*RAD;
-  S.pitch=S.kind==='top'?-Math.PI/2:-Math.min(Math.max(K.pitch,0),89)*RAD;
+  S.pitch=S.kind==='top'?-Math.PI/2:-Math.min(Math.max(K.pitch,-30),89)*RAD;
   S.fov=K.fov*RAD; S.dur=Math.max(K.dur,.5);
   const half=K.speed*S.dur*.5, a=S.yaw0+K.travel*RAD;
   S.p0=[c[0]-Math.cos(a)*half,c[1]-K.climb*.5,c[2]-Math.sin(a)*half];

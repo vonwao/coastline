@@ -62,6 +62,19 @@ float cloudBase(vec3 p,float m,float h,float lod){
   if(ov>0.) d*=mix(1.,.3+.95*textureLod(tN3,vec3(p.x*.1,.37,p.z*.1),lod).g,ov);
   return d;
 }
+/* Where a cloud's base is, as a share of the layer's depth above CLOUD_BASE. the author, 18 November, twice:
+   "bottom of clouds are completely flat and too even". Every cloud sat on the same level. Real bases are
+   level only roughly: each cloud's is a little higher or lower (by a slow noise across kilometres, up to
+   about 150 m here), the middle of a cloud hangs lowest and its edges lift, and the underside is lumpy at
+   a few hundred metres. The whole cloud is lifted with its base (cloudH), not cut off at it, so it keeps
+   its body, and the wisps under the base follow it. Bases only rise from CLOUD_BASE, where the march
+   starts. A sheet closing over keeps a flatter base. */
+float cloudLift(vec3 p,float m,float lod){
+  float nb=(textureLod(tN3,vec3(p.x*.09,.61,p.z*.09),lod).g-.49)/.08;
+  float nl=(textureLod(tN3,vec3(p.x*.7,.23,p.z*.7),lod).b-.49)/.08;
+  return clamp(.045+.03*nb+.02*nl+.05*(1.-smoothstep(0.,1.4,m)),0.,.13)*(1.-.6*smoothstep(.62,.9,uCover));
+}
+float cloudH(vec3 p,float m,float D,float lod){ float h=(p.y-CLOUD_BASE)/D, b=cloudLift(p,m,lod); return (h-b)/(1.-b); }
 /* cloudErode: the surface eaten into bulges (Worley noise at three sizes), and into wisps under the base;
    it only takes cloud away, so the shape is never smaller than the cloud. fine (0 to 1) fades the bulges and
    the sharp edge out where a pixel is wider than they are. */
@@ -76,7 +89,7 @@ float cloudErode(vec3 p,float d,float h,float lod,float fine){
 /* Both together; with fine 0, the smooth shape alone, for the light's path to the sun (sharpened, its depth
    would come in steps). */
 float cloudDens(vec3 p,float m,float D,float lod,float fine){
-  float h=(p.y-CLOUD_BASE)/D;
+  float h=cloudH(p,m,D,lod);
   if(h<=0.||h>=1.) return 0.;
   return cloudErode(p,cloudBase(p,m,h,lod),h,lod,fine);
 }
@@ -110,7 +123,7 @@ vec4 cloudSky(vec3 rd,vec3 sky,vec3 skyUp,float K,float jit,float pa,float q){
       float m=cloudMap(p.xz,thr,max(0.,log2(fp/CLOUD_BASE*.06*512.)));
       /* Fine steps wherever the shape is, before its bulges are eaten away: a thin edge between two long
          steps would be caught by some pixels and missed by their neighbours, a pattern of dots. */
-      float h=(p.y-CLOUD_BASE)/D, lod=max(0.,log2(fp*.3*128.));
+      float lod=max(0.,log2(fp*.3*128.)), h=m>-.75?cloudH(p,m,D,lod):(p.y-CLOUD_BASE)/D;
       float d0=m>-.75&&h>0.&&h<1.?cloudBase(p,m,h,lod):0.;
       if(d0<=.002){ if(fine&&++empty>6){ fine=false; dt=big; } t+=dt; continue; }
       if(!fine){ fine=true; empty=0; dt=big*.25; t=max(t0,t-big*.75); continue; }

@@ -1,14 +1,23 @@
 'use strict';
 /* ------ Baking the plant models into their texture of views ------ */
+/* A leaf's outline. Its triangles make a four-sided shape with corners; the leaf itself is the smooth
+   oval inside them, pointed at base and tip (u along the leaf, -1 to 1; v across, 0 at the midrib).
+   Blades (u from 2 to 4) keep their shape. Used by the views of each model and by the full models. */
+const LEAF_EDGE=`
+bool offLeaf(vec2 uv){
+  if(uv.y>1.5||uv.x>1.5) return false;
+  float w=.92*pow(max(sin(1.5708*(uv.x+1.)),0.),.8)*(1.-.2*uv.x);
+  return abs(uv.y)>w;
+}`;
 const VS_PLANT_BAKE=`#version 300 es
 precision highp float;
-layout(location=0) in vec3 aP; layout(location=1) in vec3 aM; layout(location=2) in vec4 aL;
+layout(location=0) in vec3 aP; layout(location=1) in vec3 aM; layout(location=2) in vec4 aL; layout(location=5) in vec2 aU;
 uniform vec3 uC,uR,uU,uF; uniform float uRad;
-out vec3 vM; out vec4 vL;
-void main(){ vec3 v=aP-uC; vM=aM; vL=aL; gl_Position=vec4(dot(v,uR)/uRad,dot(v,uU)/uRad,dot(v,uF)/uRad*.98,1.); }`;
-const FS_PLANT_BAKE=HEAD+`
-in vec3 vM; in vec4 vL; layout(location=0) out vec4 oA; layout(location=1) out vec4 oL;
-void main(){ oA=vec4(vM,1.); oL=vL; }`;
+out vec3 vM; out vec4 vL; out vec2 vU;
+void main(){ vec3 v=aP-uC; vM=aM; vL=aL; vU=aU; gl_Position=vec4(dot(v,uR)/uRad,dot(v,uU)/uRad,dot(v,uF)/uRad*.98,1.); }`;
+const FS_PLANT_BAKE=HEAD+LEAF_EDGE+`
+in vec3 vM; in vec4 vL; in vec2 vU; layout(location=0) out vec4 oA; layout(location=1) out vec4 oL;
+void main(){ if(offLeaf(vU)) discard; oA=vec4(vM,1.); oL=vL; }`;
 
 /* ------ Where plants grow. Cards and full 3D models both use this, so they always agree. ------ */
 const PLANT_GLSL=`
@@ -96,6 +105,16 @@ bool plantGrows(vec2 ip,vec2 wp,out float ground,out float scale,out int model,o
   return true;
 }`;
 const PLANT_TINT=`
+/* Each plant its own build and shade. the author, 18 November, of a beach seen from above: "plants/vegetation
+   looks a little bit unnatural, too perfect (maybe repeating patterns, colors, etc.)": each kind is a
+   few models copied many times, and every copy was the same shape, only bigger or smaller. Now each is
+   also wider or narrower (.8 to 1.22) and taller or squatter (.85 to 1.15), and lighter or darker
+   (.8 to 1.2), from a hash of where it grows, so the card and the full model of a plant agree. */
+vec3 plantVary(vec2 wp){
+  vec3 p3=fract(vec3(wp.xyx)*vec3(.1031,.1030,.0973)+.37); p3+=dot(p3,p3.yzx+33.33);
+  vec3 h=fract((p3.xxy+p3.yzz)*p3.zyx);
+  return vec3(mix(.8,1.22,h.x),mix(.85,1.15,h.y),mix(.8,1.2,h.z));
+}
 /* Each model's own colour in a vegetation preset (js/vegetation.js): a factor on the green, and how much
    of its colour is taken out (grey-green sage and olive). All zero means not set: as the kind of plants. */
 uniform vec4 uMTint[11];
@@ -198,7 +217,8 @@ void main(){
   vFade=fade;
   if(uMeshD>0.){ vHand=smoothstep(uMeshD*.8,uMeshD,dist); fade*=vHand; }
   float rad=info.x*scale;
-  vec3 C=vec3(wp.x,ground+info.y*scale,wp.y);
+  vec3 vary=plantVary(wp);
+  vec3 C=vec3(wp.x,ground+info.y*scale*vary.y,wp.y);
   vec3 toCam=uRo-C; float len=length(toCam);
   vec3 F=-toCam/len;
   /* Which view of the model to show. Past 110 m, and always in top-down shots, it stays fixed for
@@ -211,14 +231,16 @@ void main(){
   for(int i=0;i<4;i++){ if(el>=E[i]) row=float(i)+clamp((el-E[i])/(E[i+1]-E[i]),0.,1.); }
   vRow=row; vNear=nearK; vLayer=float(model);
   vec3 cr=normalize(cross(F,vec3(0.,1.,0.))),cu=cross(cr,F);
-  vec3 pos=C+(cr*(corner.x-.5)+cu*(corner.y-.5))*rad*2.-F*rad*.32;
+  /* Wider or squatter as the model is (plantVary); seen from above, the card's height is also width. */
+  float cuK=mix(vary.y,vary.x,abs(F.y));
+  vec3 pos=C+(cr*(corner.x-.5)*vary.x+cu*(corner.y-.5)*cuK)*rad*2.-F*rad*.32;
   float sway=sin(uTime*(model<2?1.1:.75)+yaw*6.4+wp.x*.03)*corner.y*corner.y;
   pos+=cr*sway*rad*.012*fade;
   vec3 v=pos-uRo; float z=dot(v,uF);
   gl_Position=vec4(dot(v,uR)/(uTan*uAspect),dot(v,uU)/uTan,uDA*z+uDB,z); gl_Position.xy-=uJit*gl_Position.w;
   vUV=corner;
   vW=sunWeights(uSun,yaw);
-  vTint=modelTint(uType,tint,model);
+  vTint=modelTint(uType,tint,model)*vary.z;
   float cs=1.;
   cs=cloudShadow(C);
   vLit=lit*cs;
@@ -271,15 +293,16 @@ precision highp float; precision highp int; precision highp sampler2D;
 #define PI 3.14159265359
 `+PLANT_TINT+`
 layout(location=0) in vec3 aP; layout(location=1) in vec3 aM; layout(location=2) in vec4 aL;
-layout(location=3) in vec4 iA; layout(location=4) in vec4 iB; uniform vec2 uJit;
+layout(location=3) in vec4 iA; layout(location=4) in vec4 iB; layout(location=5) in vec2 aU; uniform vec2 uJit;
 uniform vec3 uRo,uR,uU,uF,uSun,uSunE; uniform float uTan,uAspect,uDA,uDB,uMeshD,uTime,uCloudShade,uCloudT; uniform int uType;
 uniform sampler2D tEnv,tNoise;
 `+CLOUD_SHADOW+`
-out vec3 vM,vTint,vSky,vBack,vP; out vec4 vL,vW; out float vLit,vFade,vCam;
+out vec3 vM,vTint,vSky,vBack,vP; out vec4 vL,vW; out float vLit,vFade,vCam; out vec2 vU;
 vec2 envUV(vec3 d){ return vec2(atan(d.z,d.x)/(2.*PI)+.5,asin(clamp(d.y,-1.,1.))/PI+.5); }
 void main(){
   float scale=fract(iA.w)/.4,yaw=iB.x,c=cos(yaw),s=sin(yaw);
-  vec3 p=aP*scale;
+  vec3 vary=plantVary(iA.xz);
+  vec3 p=aP*scale*vary.xyx;
   vec3 pos=iA.xyz+vec3(c*p.x-s*p.z,p.y,s*p.x+c*p.z);
   /* Wind: branches move a little, more toward the top and for leaves more than for wood. */
   float h=max(p.y,0.);
@@ -287,7 +310,7 @@ void main(){
   pos.xz+=vec2(.8,.5)*g*.012*h*smoothstep(.04,.08,aM.y);
   vec3 v=pos-uRo; float z=dot(v,uF);
   gl_Position=vec4(dot(v,uR)/(uTan*uAspect),dot(v,uU)/uTan,uDA*z+uDB,z); gl_Position.xy-=uJit*gl_Position.w;
-  vP=aP; vM=aM; vL=aL; vW=sunWeights(uSun,yaw); vTint=modelTint(uType,iB.yz,int(floor(iA.w)));
+  vP=aP; vM=aM; vL=aL; vU=aU; vW=sunWeights(uSun,yaw); vTint=modelTint(uType,iB.yz,int(floor(iA.w)))*vary.z;
   float cs=1.;
   cs=cloudShadow(iA.xyz);
   vLit=iB.w*cs;
@@ -297,13 +320,14 @@ void main(){
   vFade=1.-smoothstep(uMeshD*.8,uMeshD,length(iA.xz-uRo.xz));
   vCam=length(v);
 }`;
-const FS_MESH=HEAD+PLANT_SHADE+`
-in vec3 vM,vTint,vSky,vBack,vP; in vec4 vL,vW; in float vLit,vFade,vCam; layout(location=0) out vec4 o; uniform vec3 uSunE; uniform sampler2D tNoise; uniform float uNoiseF;
+const FS_MESH=HEAD+PLANT_SHADE+LEAF_EDGE+`
+in vec3 vM,vTint,vSky,vBack,vP; in vec4 vL,vW; in float vLit,vFade,vCam; in vec2 vU; layout(location=0) out vec4 o; uniform vec3 uSunE; uniform sampler2D tNoise; uniform float uNoiseF;
 void main(){
   float ign=fract(52.9829189*fract(dot(gl_FragCoord.xy+5.588238*uNoiseF,vec2(.06711056,.00583715))));
   /* Anything right at the lens thins out, so the drone can pass through a crown without the
      whole picture going dark. */
   if(ign>vFade*smoothstep(.9,2.,vCam)) discard;
+  if(offLeaf(vU)) discard;
   float bright=vM.r;
   if(vM.g<.08){
     /* Bark: long furrows running up the stem */
@@ -311,5 +335,28 @@ void main(){
     float g=textureLod(tNoise,vec2(s*1.3,vP.y*.11),0.).g*.6+textureLod(tNoise,vec2(s*4.1,vP.y*.31),0.).a*.4;
     bright*=.42+1.25*g;
   }
-  o=vec4(plantShade(bright,vM.g,skyVis(vM.b,vL),dot(vL,vW),vTint,vLit,vSky,vBack,uSunE),1.);
+  /* A leaf's own detail, close up. the author, 18 November, in a low pass through a tropical wood: "leaves
+     don't look very natural, bc lacking detail so close up". Each leaf was one flat colour. Now: a pale
+     midrib, side veins running out toward the tip (parallel veins on blades: palm leaflets, grass), the
+     leaf darker toward its edge and tip and lighter at the base, and faint mottling, its own on each
+     leaf. All of it fades out where a leaf is only a few pixels wide, where it would only shimmer. */
+  float hue=vM.g;
+  if(vU.y<1.5&&hue>=.08){
+    float fw=max(fwidth(vU.x),fwidth(vU.y));
+    float dk=1.-smoothstep(.12,.35,fw);
+    if(dk>0.){
+      bool blade=vU.x>1.5;
+      float au=blade?vU.x-3.:vU.x, av=abs(vU.y);
+      float aa=max(fw,.01);
+      float mid=1.-smoothstep(.035,.035+aa*1.5,av);
+      float vein;
+      if(blade){ float q=abs(fract(av*3.)-.5); vein=(1.-smoothstep(.06,.06+aa*3.,q))*smoothstep(.15,.3,av)*.6; }
+      else { float q=abs(fract((au*.5+.5)*5.5-av*1.6)-.5); vein=(1.-smoothstep(.05,.05+aa*4.,q))*smoothstep(.07,.18,av)*(1.-smoothstep(.7,.92,av)); }
+      float mot=textureLod(tNoise,vU*vec2(.35,.22)+fract(vP.xz*.173+vP.y*.31),0.).r;
+      float k=1.+.22*mid+.09*vein-.17*smoothstep(.5,1.,av)-.08*smoothstep(.55,1.,au)+.07*(1.-smoothstep(-1.,-.5,au))+.16*(mot-.5);
+      bright*=mix(1.,k,dk);
+      hue+=(.06*mid+.03*vein)*dk;
+    }
+  }
+  o=vec4(plantShade(bright,hue,skyVis(vM.b,vL),dot(vL,vW),vTint,vLit,vSky,vBack,uSunE),1.);
 }`;

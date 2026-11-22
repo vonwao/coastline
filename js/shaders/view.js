@@ -111,7 +111,7 @@ uniform vec3 uRo,uR,uU,uF; uniform vec2 uJit; uniform float uTan,uAspect,uResY,u
 uniform vec2 uDomMin,uDomSize,uFarMin,uFarSize,uCellN; uniform float uDx,uEdge,uMaxH,uNearH,uTide,uSimT,uTime,uChop,uSwH;
 uniform sampler2D tTerr,tTerrF,tLit,tLitF,tRM0,tRM1,tFx,tAdv,tFFT,tCaus,tEnv,tNoise,tLace,tCrown,tRock,tExtra; uniform int uLabel;
 uniform vec3 uSun,uSunE,uSigA,uSigS,uSed,uSandA,uSandB,uSandPatch; uniform int uType;
-uniform vec4 uSwK[8]; uniform float uSwA[8]; uniform int uFlora; uniform float uMixed,uRockAng,uGranite,uFish,uSnow,uFarLod,uSlopeK,uFarStep; uniform vec4 uShrubM;
+uniform vec4 uSwK[8]; uniform float uSwA[8]; uniform int uFlora; uniform vec3 uRockTone; uniform float uMixed,uRockAng,uGranite,uFish,uSnow,uFarLod,uSlopeK,uFarStep; uniform vec4 uShrubM;
 uniform float uWA,uWB,uFogB,uCloudShade,uCloudT,uDA,uDB,uCardD,uCardS,uStars,uGreenD;
 uniform vec3 uMoonSun; uniform float uMoonLit;
 /* tExtra: the sky with its clouds, drawn for this very picture by the cloud pass (FS_CLOUDS in
@@ -141,18 +141,22 @@ float moonDisc(vec3 rd,float mu,float pa){
 }
 /* Stars, for night skies: a fixed field of points, each about a pixel wide, a few bright and many faint,
    twinkling a little. The sky is divided into small cells round the camera, each holding at most one
-   star at a random spot. Returns brightness, before the sky's own light and clouds are allowed for. */
+   star at a random spot. Returns brightness, before the sky's own light and clouds are allowed for.
+   Fewer than there were: one cell in 70 holds a star (it was one in 29), and the faintest are fainter,
+   so a sky shows a scatter of bright ones and only a dusting of the rest; near the horizon, where the
+   air is thickest, they fade out higher up. the author, 18 November: "Too many stars, in reality you might
+   only see a few stars, right?" */
 float stars(vec3 d,float pa){
   vec3 q=d*220.; vec3 c=floor(q);
   float h=fract(sin(dot(c,vec3(127.1,311.7,74.7)))*43758.5453);
-  if(h<.965) return 0.;
+  if(h<.986) return 0.;
   vec3 j=vec3(fract(h*17.31),fract(h*91.7),fract(h*313.9));
   vec3 sd=normalize(c+.2+.6*j);
   float a=acos(clamp(dot(d,sd),-1.,1.));
   float r=max(pa*.75,1e-5);
-  float mag=pow(fract(h*7.13),5.)*3.+.08;
+  float mag=pow(fract(h*7.13),4.)*3.+.03;
   float tw=.75+.25*sin(uTime*(2.+5.*fract(h*3.7))+h*40.);
-  return mag*tw*exp(-a*a/(r*r))*smoothstep(.0,.12,d.y);
+  return mag*tw*exp(-a*a/(r*r))*smoothstep(.02,.22,d.y);
 }
 /* Ground slope (rise over run) at the point being shaded, for sizing features across the ground. */
 float gSlope=.05;
@@ -1525,6 +1529,10 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
     vec2 tn=normalize(vec2(-Ng.z,Ng.x)+1e-4);
     float stk=smoothstep(.52,.70,textureLod(tNoise,vec2(dot(P.xz,tn)/14.,P.y/90.+.3),0.).g);
     gr*=1.-.38*stk*steepF;
+    /* A coast's own shade of the stone (rockTone in js/scenes.js): the Alpine lake's mountains are a
+       darker, cooler grey than Palm cove's boulders; pale like those, whole mountainsides read as plaster.
+       Over hundreds of metres the tone wanders, as rock does from one buttress to the next. */
+    gr*=uRockTone*(.8+.4*textureLod(tNoise,P.xz/430.+.13,0.).b);
     r=mix(r,gr,uGranite);
   }
   /* Weathering tone, and a few wandering cracks from the stone texture. */
@@ -2139,13 +2147,33 @@ void main(){
   float cs=cloudShadow(P);
   lit.x*=b1.w;
   /* Snow on high ground. The snowline wanders, and steep faces shed their snow, so peaks are streaked
-     with dark rock. Snow smooths away the rock's small relief. */
+     with dark rock. Snow smooths away the rock's small relief.
+     the author, 18 November, on the Alpine lake: "mountains & snow don't look natural". The snow was a soft
+     wash, thinning gradually with slope, so below the line it left pale smudges and on the peaks a smooth
+     white like plastic. Snow lies or it doesn't: its edge is now sharp at the size of a few metres and
+     ragged (fine noise moves it), so patches have outlines. On steep faces it stays only in streaks down
+     the fall line, the gullies and ledges that hold it, with bare rock ribs between (noise stretched
+     down the slope, as the rain streaks on rock are). Below the line only a few gullies keep a patch.
+     Its surface has a faint grain of wind crust, and away from the sun it is blue from the sky (the
+     lighting does that). */
   float snow=0.;
   if(uSnow>0.&&y>uSnow-500.){
-    float sl=y+220.*(nz(P.xz,610.,fp,0)-.5)+70.*(nz(P.xz,97.,fp,1)-.5);
-    snow=smoothstep(uSnow-160.,uSnow+90.,sl)*(1.-smoothstep(.75,1.45,gSlope+.4*(nz(P.xz,37.,fp,2)-.5)));
-    vec3 sc=vec3(.82,.84,.88)*(.93+.1*nz(P.xz,9.,fp,3));
-    alb=mix(alb,sc,snow); Nd=normalize(mix(Nd,N,snow*.7)); m.b*=1.-snow;
+    float sl=y+200.*(nz(P.xz,610.,fp,0)-.5)+60.*(nz(P.xz,97.,fp,1)-.5);
+    float high=smoothstep(uSnow-90.,uSnow+90.,sl);
+    vec2 tn=normalize(vec2(-N.z,N.x)+1e-4);
+    float gl=textureLod(tNoise,vec2(dot(P.xz,tn)/26.,y/240.+.31),max(log2(max(fp,1e-3)*512./26.),0.)).r;
+    float gl2=textureLod(tNoise,vec2(dot(P.xz,tn)/9.,y/90.+.77),max(log2(max(fp,1e-3)*512./9.),0.)).g;
+    /* Slope from the surface itself: gSlope is for sizing detail and reads the far peaks as gentle. */
+    float sN=sqrt(max(1.-N.y*N.y,0.))/max(N.y,.05);
+    float hold=1.-smoothstep(.95,1.9,sN-.33*(gl-.5)-.25*(gl2-.5));
+    float s0=high*hold+.3*(gl-.5)*high+.16*(nz(P.xz,61.,fp,1)-.5)+.16*(nz(P.xz,13.,fp,3)-.5)+.1*(nz(P.xz,4.1,fp,2)-.5);
+    /* The edge is as sharp as the pixel allows: further off, where a pixel spans metres, it softens. */
+    float ew=.04+.5*smoothstep(1.,12.,fp);
+    snow=smoothstep(.5-ew,.5+ew,s0)*smoothstep(uSnow-300.,uSnow-200.,sl);
+    vec3 sc=vec3(.84,.86,.9)*(.95+.07*nz(P.xz,9.,fp,3));
+    alb=mix(alb,sc,snow);
+    vec2 crust=nzSlope(P.xz,6.,fp,.08)+nzSlope(P.xz,1.7,fp,.05);
+    Nd=normalize(mix(Nd,normalize(N+vec3(-crust.x,0.,-crust.y)),snow*.85)); m.b*=1.-snow;
   }
   /* A waterfall and its stream, on the ground they run over (fallAt above). */
   float fCov,fWhite,fWet; fallAt(P,fp,N.y,fCov,fWhite,fWet);

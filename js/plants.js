@@ -30,7 +30,9 @@ function basisOf(n){ const u=v3.norm(v3.cross(Math.abs(n[1])>.9?[1,0,0]:[0,1,0],
 class PlantBuilder{
   constructor(){ this.pos=[]; this.rec=[]; }
   /* Each record is one leaf or bark facet: its triangles, and what its shading needs. */
-  add(tris,n,area,bright,hue,woody,vn=null){ this.rec.push({start:this.pos.length/3,count:tris.length/3,n,area,bright,hue,woody,c:null,vn}); for(const v of tris) this.pos.push(v); }
+  /* uv: where each vertex is on its leaf (leaf and blade, below), for the leaf's own detail close up
+     (FS_MESH in js/shaders/trees.js); none for bark. */
+  add(tris,n,area,bright,hue,woody,vn=null,uv=null){ this.rec.push({start:this.pos.length/3,count:tris.length/3,n,area,bright,hue,woody,c:null,vn,uv}); for(const v of tris) this.pos.push(v); }
   /* A pointed oval leaf, folded a little along its midrib: each half is its own shading record. */
   leaf(p,n,size,aspect,bright,hue,r){
     const [a,b]=basisOf(n); const t=r()*6.28318,c=Math.cos(t),s=Math.sin(t);
@@ -41,7 +43,8 @@ class PlantBuilder{
     for(const sg of [-1,1]){
       const L1=v3.add(at(-.42,sg*.98),fold),L2=v3.add(at(.34,sg*.74),fold);
       const nh=v3.norm(v3.add(n,v3.mul(v3.norm(w),sg*.34)));
-      this.add([...base,...L1,...L2,...base,...L2,...tip],nh,size*size*aspect*1.1,bright+sg*.035,hue,false);
+      /* Along the leaf from base (-1) to tip (1); across from the midrib (0) to the edge (1, signed). */
+      this.add([...base,...L1,...L2,...base,...L2,...tip],nh,size*size*aspect*1.1,bright+sg*.035,hue,false,null,[-1,0,-.42,sg*.98,.34,sg*.74,-1,0,.34,sg*.74,1,0]);
     }
   }
   /* Long thin leaf between two points, for palm leaflets and grass */
@@ -49,7 +52,8 @@ class PlantBuilder{
     const d=v3.norm(v3.sub(p1,p0)),s=v3.mul(v3.norm(v3.cross(d,n)),width*.5);
     const m=v3.mul(v3.add(p0,p1),.5);
     const a=v3.add(m,s),b=v3.sub(m,s);
-    this.add([...p0,...a,...p1,...p0,...p1,...b],n,Math.hypot(p1[0]-p0[0],p1[1]-p0[1],p1[2]-p0[2])*width*.5,bright,hue,false);
+    /* A blade's place along it is kept 3 higher (2 to 4), which tells its parallel veins from a leaf's. */
+    this.add([...p0,...a,...p1,...p0,...p1,...b],n,Math.hypot(p1[0]-p0[0],p1[1]-p0[1],p1[2]-p0[2])*width*.5,bright,hue,false,null,[2,0,3,1,4,0,2,0,4,0,3,-1]);
   }
   /* A round stem through a list of points. The ring frame is carried along the path, so it never
      twists, and normals are per vertex, so the surface shades smoothly. */
@@ -122,8 +126,9 @@ class PlantBuilder{
     const vis=(c,d)=>{ let tau=0,x=c[0]+d[0]*dx*1.2,y=c[1]+d[1]*dx*1.2,z=c[2]+d[2]*dx*1.2;
       for(let s=0;s<G;s++){ const q=cell(x,y,z); if(q<0) break; tau+=grid[q]; if(tau*k>5) break; x+=d[0]*dx;y+=d[1]*dx;z+=d[2]*dx; }
       return Math.exp(-tau*k); };
-    /* Ten floats a vertex: position, then brightness, hue, ambient, then four directional light values */
-    const nV=P.length/3,out=new Float32Array(nV*10);
+    /* Twelve floats a vertex: position, then brightness, hue, ambient, then four directional light values,
+       then the place on the leaf (2 across for bark: none). */
+    const nV=P.length/3,out=new Float32Array(nV*12);
     for(const R of this.rec){
       const v=PLANT_DIRS.map(d=>vis(R.c,d));
       const amb=(v[0]+v[1]+v[2]+v[3]+v[4]*2)/6;
@@ -131,10 +136,11 @@ class PlantBuilder{
       const shade=(nn)=>[0,1,2,3].map(i=>(R.woody?(.25+.75*v[i])*Math.max(v3.dot(nn,PLANT_DIRS[i]),.1):v[i]*(.32+.68*Math.max(v3.dot(nn,PLANT_DIRS[i]),0))));
       const flat=R.vn?null:shade(R.n);
       for(let i=0;i<R.count;i++){
-        const a=(R.start+i)*3,o=(R.start+i)*10,l=flat||shade(R.vn[i]);
+        const a=(R.start+i)*3,o=(R.start+i)*12,l=flat||shade(R.vn[i]);
         out[o]=P[a];out[o+1]=P[a+1];out[o+2]=P[a+2];
         out[o+3]=bright;out[o+4]=R.hue;out[o+5]=amb;
         out[o+6]=l[0];out[o+7]=l[1];out[o+8]=l[2];out[o+9]=l[3];
+        out[o+10]=R.uv?R.uv[i*2]:0;out[o+11]=R.uv?R.uv[i*2+1]:2;
       }
     }
     /* Card radius and crown height for the shader */
@@ -657,9 +663,10 @@ async function buildPlants(models=plantModels(),set={},opt={}){
     const old=set.mesh[m]; if(old){ gl.deleteVertexArray(old.vao); gl.deleteBuffer(old.vb); gl.deleteBuffer(old.ib); }
     const vao=gl.createVertexArray(),vb=gl.createBuffer(),ib=gl.createBuffer();
     gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER,vb); gl.bufferData(gl.ARRAY_BUFFER,M.verts,gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,40,0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,40,12);
-    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,4,gl.FLOAT,false,40,24);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,48,0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,48,12);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,4,gl.FLOAT,false,48,24);
+    gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5,2,gl.FLOAT,false,48,40);
     /* Two more attributes, once per plant, for drawing many copies of this model in the scene. */
     gl.bindBuffer(gl.ARRAY_BUFFER,ib);
     gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3,4,gl.FLOAT,false,32,0); gl.vertexAttribDivisor(3,1);
