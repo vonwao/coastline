@@ -384,7 +384,7 @@ function taaResolve(s,S,ldr){
 }
 /* The picture of a shot: its smoothed history, or else what was last drawn into ldr. */
 function shotTex(S,ldr){ const s=TAA_ON&&RT.taa.find(x=>x.S===S&&x.valid); return s?s.t[s.i]:ldr.t; }
-function toggleTAA(){ TAA_ON=!TAA_ON; for(const s of RT.taa) s.valid=false; toast(TAA_ON?'Smoothing on':'Smoothing off (the old look)'); }
+function toggleTAA(){ TAA_ON=!TAA_ON; for(const s of RT.taa) s.valid=false; toast(TAA_ON?'Smoothing between frames on':'Smoothing between frames off'); }
 function advanceSim(L,elapsed){
   if(!L._acc) L._acc=0;
   L._acc+=Math.min(elapsed,.1);
@@ -490,7 +490,26 @@ function exportFavs(){
   toast(`Saved ${favs.length} favourites to your Downloads folder`);
 }
 let toastT;
-function toast(m){ const e=document.getElementById('toast'); e.textContent=m; e.style.opacity=1; clearTimeout(toastT); toastT=setTimeout(()=>e.style.opacity=0,2200); }
+function toast(m,ms){ const e=document.getElementById('toast'); e.textContent=m; e.style.opacity=1; clearTimeout(toastT); toastT=setTimeout(()=>e.style.opacity=0,ms||2200); }
+/* What the keys do, as functions, so the menu (js/menu.js) does the same. */
+function togglePause(){ state.paused=!state.paused; }
+function toggleFull(){ if(document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
+function toggleFavOnly(){
+  if(!state.favOnly&&!loadFavs().length){ toast('No favourites yet: press L on a scene you like'); return; }
+  state.favOnly=!state.favOnly; toast(state.favOnly?`♥ Playing favourites (${loadFavs().length})`:'Playing all scenes');
+  if(state.favOnly&&state.cur&&!state.next){
+    /* A favourite's coast may not be built just now (world.js): the first is fetched, then shown. */
+    const go=()=>{ if(state.favOnly&&state.cur&&!state.next) cutTo(chooseNext(state.cur),0); };
+    const el=coastEligible();
+    if(COASTS.auto&&!el.some(L=>L.ready)){ toast('♥ Fetching the first favourite'); coastBuild(pick(el),false).then(go,go); } else go();
+  }
+}
+/* Show one favourite now (from the list in js/rate.js); its coast is built first if it was put away. */
+function showFav(F){
+  const L=LOCATIONS.find(l=>l.name===F.loc); if(!L){ toast('That coast is not here'); return; }
+  const go=()=>{ const S=shotOf(F); if(S){ S.t=0; cutTo(S,0); } else toast('Could not show that favourite'); };
+  if(!L.ready){ toast('Bringing that coast back'); coastBuild(L,false).then(go,()=>toast('That coast could not be brought back')); } else go();
+}
 /* Recent shots, so a shot you liked can be recovered after it has gone by. */
 const history=[];
 function goBack(){
@@ -618,21 +637,12 @@ addEventListener('keydown',e=>{
   if(reelKey(e)) return;
   const k=e.key.toLowerCase();
   if(k==='g'){ toggleFly(); return; }
-  if(k==='f'){ if(document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
-  else if(k===' '){ state.paused=!state.paused; e.preventDefault(); }
+  if(k==='f'){ toggleFull(); }
+  else if(k===' '){ togglePause(); e.preventDefault(); }
   else if(k==='n'||e.key==='ArrowRight'){ if(state.cur&&!state.next) cutTo(aheadTake(state.cur)||chooseNext(state.cur),0); }
   else if(e.key==='ArrowLeft'){ if(state.cur) goBack(); }
   else if(k==='l'){ if(state.cur) toggleFav(); }
-  else if(k==='p'){
-    if(!state.favOnly&&!loadFavs().length){ toast('No favourites yet: press L on a scene you like'); return; }
-    state.favOnly=!state.favOnly; toast(state.favOnly?`♥ Playing favourites (${loadFavs().length})`:'Playing all scenes');
-    if(state.favOnly&&state.cur&&!state.next){
-      /* A favourite's coast may not be built just now (world.js): the first is fetched, then shown. */
-      const go=()=>{ if(state.favOnly&&state.cur&&!state.next) cutTo(chooseNext(state.cur),0); };
-      const el=coastEligible();
-      if(COASTS.auto&&!el.some(L=>L.ready)){ toast('♥ Fetching the first favourite'); coastBuild(pick(el),false).then(go,go); } else go();
-    }
-  }
+  else if(k==='p'){ toggleFavOnly(); }
   else if(k==='e'){ exportFavs(); }
   else if(k==='s'){ toggleSound(); }
   else if(k==='c'){ toggleCalm(); }
@@ -641,7 +651,7 @@ addEventListener('keydown',e=>{
   else if(e.key==='Escape'&&!BP.hidden){ BP.hidden=true; }
   else if(k==='h'){ hud.style.display=hud.style.display==='block'?'none':'block'; }
 });
-canvas.addEventListener('dblclick',()=>{ if(document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); });
+canvas.addEventListener('dblclick',toggleFull);
 addEventListener('resize',()=>{ if(RT.w) applyScale(); });
 /* The pointer hides after a moment's stillness, from the start too: before, it hid only after the mouse
    had moved once, so a window opened with the pointer resting over it kept the arrow on screen. */

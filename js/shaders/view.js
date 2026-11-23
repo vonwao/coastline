@@ -64,7 +64,13 @@ float shrubCov(vec2 wp,float veg){
   /* The first plants on open sand grow in scattered colonies, not spread evenly: the same clumping, more
      sharply, near the beach. */
   float pioneer=mix(mix(1.,smoothstep(.47,.68,c),uPlantCover>=4?.45:uPlantCover==3?.7:1.),1.,smoothstep(.22,.55,zoneVeg(veg)));
-  return smoothstep(.02,.55,veg)*.7*(1.-.6*smoothstep(.6,.9,veg))*1.75*smoothstep(.36,.66,c)*k*pioneer;
+  /* On open sand they gather into thickets a few metres across, with bare sand between: the author, 18 November,
+     from above, "plants/vegetation looks ... too perfect (maybe repeating patterns ...)": the shrubs at the
+     edge of the beach were an even sprinkle of single balls. (The noise above varies every 2 or 3 m, about
+     one shrub apart, too fine to group them.) As many shrubs in all; under closed cover, no change. */
+  float cl=smoothstep(.42,.58,textureLod(tNoise,rotT(wp+31.,150.)/150.,4.4).g);
+  float open=(1.-smoothstep(.3,.7,zoneVeg(veg)))*.85;
+  return smoothstep(.02,.55,veg)*.7*(1.-.6*smoothstep(.6,.9,veg))*1.75*smoothstep(.36,.66,c)*k*pioneer*mix(1.,2.*cl,open);
 }
 /* The share of grass among the small plants. Grasses and creepers are the first to grow on open sand,
    so near the beach nearly all small plants are grass; shrubs take over further in. Dunes and open
@@ -264,7 +270,7 @@ float march(vec3 ro,vec3 rd){
     /* Far away the march reads a blurred height map, to save time. Where tall mountains stand far away
        (uFarLod), it must stay sharp: the blurred ridge sits lower than the real one, so the ray hits a
        point the shading then finds inside the mountain, and ridges came out smeared and saw-toothed. */
-    gFarLod=clamp(log2(max(t-tp,1.)/16.6)+.5,0.,uFarLod);
+    gFarLod=clamp(log2(max(t-tp,1.)/(uFarSize.x/float(textureSize(tTerrF,0).x)))+.5,0.,uFarLod+log2(float(textureSize(tTerrF,0).x)/1024.));
     vec3 p=ro+rd*t; float d=p.y-surfH(p.xz);
     /* The first pass: within the cone's radius of the surface here, or of the ground half a block to
        either side? Then every pixel of the block starts from the point before. */
@@ -1515,6 +1521,15 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
   /* Iron stains and darker patches */
   r=mix(r,vec3(.26,.175,.115),smoothstep(.56,.74,big.g)*.38);
   r=mix(r,r3,smoothstep(.50,.74,mid.r)*.2);
+  /* Rock is seldom one grey (the author, 23 November, Broken coast: "I don't often see that boring gray in
+     nature"): over tens of metres it wanders between warmer browns and cooler blue-greys, and some beds
+     are buff or rusty. */
+  {
+    float hueW=textureLod(tNoise,P.xz/210.+.71,0.).g*.6+big.b*.4;
+    r*=mix(vec3(1.14,1.,.82),vec3(.88,.97,1.08),smoothstep(.35,.65,hueW));
+    float bedC=textureLod(tNoise,vec2((P.y+dip+wob)*.043,.83),0.).r;
+    r*=mix(vec3(1.),vec3(1.22,1.05,.8),smoothstep(.55,.8,bedC)*.7*(1.-uGranite));
+  }
   float steepF=1.-smoothstep(.35,.7,Ng.y);
   /* Water running down steep faces leaves long dark streaks. (Round dark blotches alone made the cliffs
      look camouflaged.) */
@@ -1533,6 +1548,19 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
        darker, cooler grey than Palm cove's boulders; pale like those, whole mountainsides read as plaster.
        Over hundreds of metres the tone wanders, as rock does from one buttress to the next. */
     gr*=uRockTone*(.8+.4*textureLod(tNoise,P.xz/430.+.13,0.).b);
+    /* Seen from above (the author, 22 November, the Alpine lake's shore: "the rock ... looks unnatural, like the
+       color/texture"), granite's tops are paler than its sides, bleached and weathered, and crusted with
+       lichen: pale grey-green patches and small dark ones, a few metres and a hand's breadth across. */
+    float upG=smoothstep(.55,.9,Ng.y);
+    gr*=mix(1.,1.18,upG);
+    /* Where a pixel covers more than the patches (from a height), the noise averages out and the patches
+       would vanish: there they become the share of rock they cover, an even tint that still varies over
+       tens of metres. */
+    float pb=nz(P.xz,13.,fp,1), fk=smoothstep(.03,.2,fp);
+    float l1=mix(smoothstep(.55,.64,pb*.45+nz(P.xz,3.3,fp,2)*.35+nz(P.xz,.85,fp,3)*.2),.5*smoothstep(.3,.7,pb),fk);
+    float l2=mix(smoothstep(.62,.7,nz(P.xz+7.,2.1,fp,3)*.6+nz(P.xz,.6,fp,0)*.4),.18,fk);
+    gr=mix(gr,vec3(.40,.41,.36)*max(uRockTone,vec3(.75))*1.15,l1*upG*.5);
+    gr=mix(gr,vec3(.06,.065,.055),l2*upG*.45);
     r=mix(r,gr,uGranite);
   }
   /* Weathering tone, and a few wandering cracks from the stone texture. */
@@ -1602,9 +1630,21 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
     float orn=smoothstep(.56,.70,mid.a*.6+big.a*.4)*ornB;
     r=mix(r,vec3(.42,.22,.055),orn*(.45+.4*upF)*.7);
   }
-  float splash=1.-smoothstep(.2,2.6+1.6*mid.r,P.y);
-  r=mix(r,vec3(.030,.031,.030)*(.7+.8*mid.r),splash*.86);
-  r=mix(r,vec3(.040,.052,.030),splash*upF*smoothstep(.50,.72,big.g*.6+mid.g*.4)*.42);
+  /* The black band is as high as the waves throw their spray (uSwH): on a calm shore, as at Palm cove, a
+     band 3 m high blackened the foot of every boulder on the beach, so they were white on top and dark
+     grey below (the author, 23 November: "weird two-toned dark gray + white"). A lake has none. */
+  float bandH=.4+1.5*uSwH;
+  /* Black lichen grows only at the top of the band. Below it, where every wave washes, the rock keeps
+     its own colour, darker, with weed: brown and olive on the flatter surfaces, bright green in patches.
+     The whole band was near black, so a wave-washed rock shelf was one flat dark grey (the author, 23 November,
+     Broken coast: "that boring gray"). */
+  float bTop=bandH*(1.+.6*mid.r);
+  float splash=(1.-smoothstep(.2,bTop,P.y))*smoothstep(.05,.5,uSwH);
+  float bUp=smoothstep(.3*bTop,.6*bTop,P.y);
+  r=mix(r,vec3(.030,.031,.030)*(.7+.8*mid.r),splash*bUp*.8);
+  float weed=smoothstep(.42,.68,big.g*.6+mid.g*.4);
+  r=mix(r,mix(r*.8,vec3(.085,.066,.032)*(.8+.4*mid.b),weed*(.45+.5*upF)),splash*(1.-bUp)*.85);
+  r=mix(r,vec3(.05,.085,.032),splash*(1.-bUp)*upF*smoothstep(.6,.78,big.b*.5+mid.r*.5)*.6);
   /* Below the black band, where the waves wash most, barnacles crust the steep faces grey. */
   float barn=smoothstep(-.3,.2,P.y)*(1.-smoothstep(.7,1.2+.5*mid.g,P.y))*smoothstep(.45,.6,mid.b*.7+big.r*.3);
   r=mix(r,vec3(.15,.145,.13)*(.7+.6*mid.a),barn*(.3+.4*steepF)*(1.-uGranite));
@@ -1873,6 +1913,8 @@ float fallZ(int i,float x){
   float dx=x-uFallB[i].z, dn=dx*uFallC[i].x;
   float z=uFallA[i].z+5.*sin(dx*.05)*smoothstep(-20.,-80.,dn);
   if(uFallC[i].w>1.5) z+=(22.*sin(dn*.0071+1.3)+7.*sin(dn*.029))*smoothstep(0.,60.,dn);
+  /* A cascade wanders from side to side (fallZ in js/shaders/terrain.js, the same line). */
+  else if(uFallC[i].w>.5) z+=6.*sin(dx*.032+.7)+2.5*sin(dx*.097+2.1);
   return z;
 }
 void fallOne(int i,vec3 P,float fp,float ny,inout float cov,inout float white,inout float wetK){
@@ -1881,12 +1923,17 @@ void fallOne(int i,vec3 P,float fp,float ny,inout float cov,inout float white,in
   float dir=C.x, up=dir*(A.x-P.x);
   if(up>C.z||dir*(P.x-B.x)>8.) return;
   float drop=max(A.y-P.y,0.), face=smoothstep(.6,3.,drop);
-  if(C.w>.5&&C.w<1.5) face*=mix(.25,1.,smoothstep(.9,.6,ny));
+  /* A cascade is white only where it drops over a step, and dark, clear water in the runs and pools
+     between (how steep the ground is says which). Whitening the whole way down because it had dropped
+     from the top made it a white chute (the author, 22 November: "the waterfall at the top and bottom doesn't
+     look very natural"). */
+  bool casc=C.w>.5&&C.w<1.5;
+  if(casc) face=smoothstep(.93,.72,ny);
   /* A far thread shows where the mountainside is steep; on the gentle slope below it is a faint stream,
      mostly hidden. (Drawn the same all the way down, it read as a road.) */
   float steepK=C.w>1.5?mix(.12,1.,smoothstep(.9,.72,ny)):1.;
   float fz=P.z-fallZ(i,P.x)+1.1*sin(drop*.23+1.7)*smoothstep(4.,16.,drop);
-  float hw=(1.3+1.1*face+.055*min(drop,60.))*C.y;
+  float hw=casc?(1.6+.9*face+.4*sin(drop*.37+fz*.2))*C.y:(1.3+1.1*face+.055*min(drop,60.))*C.y;
   float x=abs(fz)/hw;
   if(x>3.2) return;
   float a=sqrt(drop/3.4)-max(up,0.)/1.7-uTime;
@@ -1908,8 +1955,12 @@ void fallOne(int i,vec3 P,float fp,float ny,inout float cov,inout float white,in
   /* On top: dark, glassy water with soft white riffles, whitening as it nears the lip. On the face: white,
      dimmer between the strands. */
   float rif=textureLod(tNoise,vec2(fz/9.,a*.11),max(lod-1.5,0.)).r*.6+n3*.4;
-  white=mix(max(smoothstep(.6,.86,rif)*.5,smoothstep(9.,1.,up)*.85),.58+.42*smoothstep(.3,.72,strand),face);
-  wetK=max(wetK,(1.-smoothstep(.9,2.8,x+(n3-.5)*.5))*(.35+.65*face)*upK);
+  /* Upstream the water is dark and clear, with a few bright riffles where it runs over stones (it was a
+     pale grey ribbon), whitening only in the last few metres before the lip. */
+  white=mix(max(smoothstep(.72,.9,rif)*.35,smoothstep(7.,1.,up)*.85),.58+.42*smoothstep(.3,.72,strand),face);
+  /* Below a step the water is still churned: a little foam drifting on the pool. */
+  if(casc) white=max(white*mix(.35,1.,face),.25*smoothstep(.55,.85,n2)*(1.-face));
+  wetK=max(wetK,(1.-smoothstep(.9,casc?4.:2.8,x+(n3-.5)*.5))*(casc?.7+.3*face:.35+.65*face)*upK);
 }
 void fallAt(vec3 P,float fp,float ny,out float cov,out float white,out float wetK){
   cov=0.; white=0.; wetK=0.;
@@ -2156,6 +2207,21 @@ void main(){
      down the slope, as the rain streaks on rock are). Below the line only a few gullies keep a patch.
      Its surface has a faint grain of wind crust, and away from the sun it is blue from the sky (the
      lighting does that). */
+  /* Beach vines (a preset's mats) seen from afar. the author, 22 November, on a low pass over Surf beach: "The
+     green/plants are appearing like they are getting rendered in after the fact ... re-rendered
+     differently so it almost looks like a wave [on] the ground as the camera moves". The vines lie flat,
+     so from a shallow angle each one's card is a thin sliver, which the cards drop: they showed only
+     near the camera, and the edge where they appeared travelled with it. The ground where they grow is
+     now their green, as a patch of vines looks from afar, fully where a pixel is wider than a leaf or the
+     cards end, and partly close up, under the plants that take over there. */
+  if(uVeg>0&&uVegM.x>.5&&uCardS>0.&&m.r>.5&&m.g<.5){
+    float mc=fernCov(m.b,0.,P.xz);
+    if(mc>0.){
+      float far=max(mix(.35,1.,smoothstep(.03,.15,fp)),smoothstep(uCardS*.6,uCardS*.9,length(P-uRo)));
+      vec3 vine=vec3(.062,.092,.036)*(.85+.3*nz(P.xz,7.,fp,1));
+      alb=mix(alb,vine,min(mc*1.6,.5)*far); sandness*=1.-min(mc*1.6,.6)*far;
+    }
+  }
   float snow=0.;
   if(uSnow>0.&&y>uSnow-500.){
     float sl=y+200.*(nz(P.xz,610.,fp,0)-.5)+60.*(nz(P.xz,97.,fp,1)-.5);
@@ -2177,6 +2243,8 @@ void main(){
   }
   /* A waterfall and its stream, on the ground they run over (fallAt above). */
   float fCov,fWhite,fWet; fallAt(P,fp,N.y,fCov,fWhite,fWet);
+  /* Beside the water the rock stays wet, and moss grows on it, in patches. */
+  if(fWet>0.&&fCov<.99) alb=mix(alb,mix(alb*.55,vec3(.045,.065,.03),.55*smoothstep(.45,.7,nz(P.xz,3.1,fp,2))),fWet*.8*(1.-fCov));
   if(fCov>0.){
     alb=mix(alb,mix(vec3(.035,.06,.065),vec3(.95,.97,.99),fWhite),fCov);
     Nd=normalize(mix(Nd,N+vec3(0.,.6,0.),fCov*.85)); m.b*=1.-fCov; sandness*=1.-fCov;
@@ -2186,9 +2254,13 @@ void main(){
   /* Towels, trodden sand and footprints, and the shadows of people and umbrellas (js/people.js). */
   if(uPeopleN>0.){ float pSh=1.; peopleGround(P,fp,sandness,uSun,alb,pSh); cSh*=pSh; }
   float wetBelt=(1.-smoothstep(.12,.72+.5*nz(P.xz,29.,fp,0),T-uTide))*sandness;
-  float wet=clamp(max(max(fx.b,wetBelt*.72),max(fWet*.7,fCov*(1.-fWhite))),0.,1.);
+  /* Rock the waves reach stays wet, as high as they run and splash (uSwH), and wet rock is darker and
+     shiny (the author, 23 November: "it gets darker when it's wet!"). It darkened by only a quarter, less than
+     wet sand, and only where the water had just been. */
+  float wetRock=(1.-smoothstep(.15,.4+1.3*uSwH*(.6+.8*nz(P.xz,9.,fp,1)),y-uTide))*m.g*(1.-sandness);
+  float wet=clamp(max(max(max(fx.b,wetBelt*.72),wetRock*.85),max(fWet*.7,fCov*(1.-fWhite))),0.,1.);
   float wetS=wet*wet;
-  vec3 al=alb*mix(1.,mix(.50,.72,m.g),wetS);
+  vec3 al=alb*mix(1.,mix(.50,.55,m.g),wetS);
   /* Debris at the top of the swash line. */
   /* It's a fine line, so it fades out with distance: seen from the air, a thin dark line along the
      highest run-up read as a crack in the sand. */

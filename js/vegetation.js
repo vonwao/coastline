@@ -83,7 +83,7 @@ const VEG_PRESETS={
     models:[makeNothing,makeNothing,
       ()=>makeBroadleaf(1241,14,1.0,.3,.5,.3,{size:.12,aspect:.65,n:.95}),()=>makeBroadleaf(1257,13,1.2,.45,.52,.34,{size:.2,aspect:.9,n:.6}),
       ()=>makePine(1273,10,3.5,.40,.2,{bend:1.4,lo:.35,flat:.75,limbs:1.3,needle:.13,aspect:.25}),()=>makeConifer(1289,20,4.2,.34,.14),
-      ()=>makeShrub(1301,1.3,.44,.22,{flat:.9,leaf:[.06,.6],n:1.5}),()=>makeGrass(1313,.75,.6,.5,{n:200,spread:.7,base:.35,width:1.6}),
+      ()=>makeShrub(1301,1.3,.44,.22,{flat:.9,leaf:[.06,.6],n:1.5}),()=>makeGrass(1313,.95,.6,.5,{n:260,spread:.85,base:.4,width:.9}),
       ()=>makeConifer(1331,17,3.6,.36,.16),()=>makeMultiStem(1349,6,3.5,.5,.36,{size:.1,aspect:.35,n:1.5}),
       ()=>makeFern(1363,1.5,.44,.45)],
     names:['','','red alder','bigleaf maple','shore pine','Sitka spruce','salal','dune wildrye','western hemlock','willow','sword fern'],

@@ -54,8 +54,8 @@ void main(){
   vec3 cur=texelFetch(tCur,p,0).rgb;
   if(uK<1.){
     /* The colours around this pixel, and the nearest depth among them, so an edge follows the thing in front. */
-    vec3 m1=vec3(0.),m2=vec3(0.); float dz=1.,still=1.;
-    for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){ ivec2 q=clamp(p+ivec2(i,j),ivec2(0),S); vec3 c=toY(texelFetch(tCur,q,0).rgb); m1+=c; m2+=c*c; dz=min(dz,texelFetch(tDepth,q,0).r); still=min(still,texelFetch(tCls,q,0).a); }
+    vec3 m1=vec3(0.),m2=vec3(0.); float dz=1.,still=0.;
+    for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){ ivec2 q=clamp(p+ivec2(i,j),ivec2(0),S); vec3 c=toY(texelFetch(tCur,q,0).rgb); m1+=c; m2+=c*c; dz=min(dz,texelFetch(tDepth,q,0).r); still=max(still,texelFetch(tCls,q,0).a); }
     m1/=9.; vec3 sg=sqrt(max(m2/9.-m1*m1,0.));
     /* Where this point was on the screen a frame ago. The sky is far enough to need only the direction. */
     vec2 n=vUV*2.-1.; vec3 dir=uF+uR*n.x*uTan*uAspect+uU*n.y*uTan;
@@ -68,7 +68,10 @@ void main(){
          Where the picture moves fast (a low pass), the new frame counts for more, which keeps it sharp. */
       float mv=length((q-vUV)*vec2(S+1));
       /* Water (alpha 0 in the main pass's picture, tCls) moves on its own: foam and ripples would smear, so
-         the new frame counts for uKWater there. */
+         the new frame counts for uKWater there, but only where all nine pixels round this one are water.
+         It used to be wherever any of them was: then every pixel on the outline of a rock against the sea
+         went unsmoothed, and as the camera's sub-pixel shift changed each frame, the outlines of thin rock
+         peaks flickered (the author, 22 November, Sea cliffs in a storm: "the rock peaks are flickering"). */
       cur=fromY(mix(h,toY(cur),max(uK+uKMove*smoothstep(.5,6.,mv),mix(uKWater,0.,still))));
     }
   }
@@ -76,14 +79,24 @@ void main(){
 }`;
 const FS_FINAL=HEAD+`in vec2 vUV; out vec4 o; uniform sampler2D tI; uniform vec2 uTx,uOut; uniform float uTime,uSharp,uNoFxaa;
 float hash(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+/* The picture stretched to the screen with a Catmull-Rom filter (five reads, as the smoothing's history in
+   FS_TAA): sharper than straight-line blending, which softens every edge across the stretch. */
+vec3 cubic(vec2 uv){
+  vec2 sz=vec2(textureSize(tI,0)),sp=uv*sz,tp=floor(sp-.5)+.5,f=sp-tp;
+  vec2 w0=f*(-.5+f*(1.-.5*f)),w1=1.+f*f*(-2.5+1.5*f),w2=f*(.5+f*(2.-1.5*f)),w3=f*f*(-.5+.5*f);
+  vec2 w12=w1+w2,t0=(tp-1.)/sz,t3=(tp+2.)/sz,t12=(tp+w2/w12)/sz;
+  vec3 c=texture(tI,vec2(t12.x,t0.y)).rgb*(w12.x*w0.y)+texture(tI,vec2(t0.x,t12.y)).rgb*(w0.x*w12.y)
+        +texture(tI,t12).rgb*(w12.x*w12.y)+texture(tI,vec2(t3.x,t12.y)).rgb*(w3.x*w12.y)+texture(tI,vec2(t12.x,t3.y)).rgb*(w12.x*w3.y);
+  return max(c/(w12.x*w0.y+w0.x*w12.y+w12.x*w12.y+w3.x*w12.y+w12.x*w3.y),0.);
+}
 void main(){
   /* FXAA, then a touch of sharpening when upscaling. The live smoothing over time does FXAA's job better,
      so with it on (uNoFxaa) FXAA is skipped. */
   vec4 M=texture(tI,vUV);
   float nw=textureOffset(tI,vUV,ivec2(-1,-1)).a,ne=textureOffset(tI,vUV,ivec2(1,-1)).a,sw=textureOffset(tI,vUV,ivec2(-1,1)).a,se=textureOffset(tI,vUV,ivec2(1,1)).a,m=M.a;
   float lmin=min(m,min(min(nw,ne),min(sw,se))),lmax=max(m,max(max(nw,ne),max(sw,se)));
-  vec3 c=M.rgb;
-  if(uNoFxaa<.5&&lmax-lmin>max(.045,lmax*.12)){
+  vec3 c=M.rgb; bool fx=false;
+  if(uNoFxaa<.5&&lmax-lmin>max(.045,lmax*.12)){ fx=true;
     vec2 d=vec2(-((nw+ne)-(sw+se)),((nw+sw)-(ne+se)));
     float rd=1./(min(abs(d.x),abs(d.y))+max((nw+ne+sw+se)*.03,.008));
     d=clamp(d*rd,-6.,6.)*uTx;
@@ -92,8 +105,20 @@ void main(){
     float lb=dot(b,vec3(.299,.587,.114));
     c=(lb<lmin||lb>lmax)?a:b;
   }
-  vec3 blur=.25*(textureOffset(tI,vUV,ivec2(1,0)).rgb+textureOffset(tI,vUV,ivec2(-1,0)).rgb+textureOffset(tI,vUV,ivec2(0,1)).rgb+textureOffset(tI,vUV,ivec2(0,-1)).rgb);
-  c=clamp(c+(c-blur)*uSharp,0.,1.);
+  vec3 e1=textureOffset(tI,vUV,ivec2(1,0)).rgb,e2=textureOffset(tI,vUV,ivec2(-1,0)).rgb,e3=textureOffset(tI,vUV,ivec2(0,1)).rgb,e4=textureOffset(tI,vUV,ivec2(0,-1)).rgb;
+  vec3 blur=.25*(e1+e2+e3+e4);
+  /* Stretched to a larger screen (a screen pixel smaller than a picture pixel): the sharper filter, and
+     sharpening that holds back where the contrast is already high (as AMD's CAS does), so edges don't
+     get bright and dark halos. A picture shrunk to the screen (films) keeps the straight-line read. */
+  float up=1.-smoothstep(.85,1.,abs(dFdx(vUV.x))*float(textureSize(tI,0).x));
+  float sk=uSharp;
+  if(up>0.){
+    if(!fx) c=mix(c,cubic(vUV),up);
+    vec3 mn=min(min(min(e1,e2),min(e3,e4)),c),mx=max(max(max(e1,e2),max(e3,e4)),c);
+    float amp=sqrt(clamp(min(dot(mn,vec3(.33)),1.-dot(mx,vec3(.33)))/max(dot(mx,vec3(.33)),.02),0.,1.));
+    sk=mix(uSharp,uSharp*(.45+.8*amp),up);
+  }
+  c=clamp(c+(c-blur)*sk,0.,1.);
   vec2 q=vUV-.5; float v=1.-dot(q,q)*.34; c*=v;
   float g=hash(gl_FragCoord.xy+fract(uTime)*311.)-.5;
   c+=g*.010*(1.-.5*dot(c,vec3(.33)));

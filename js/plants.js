@@ -342,17 +342,28 @@ function makeShrub(seed,R0,bright,hue,o={}){
 function makeGrass(seed,R0,bright,hue,o={}){
   const r=prng(seed),B=new PlantBuilder();
   const N=o.n??420, sp=o.spread??1, wd=o.width??1, st=o.stiff??0, base0=o.base??.5;
-  for(let i=0;i<N;i++){
-    const a=r()*6.28318,d=R0*base0*Math.sqrt(r());
-    const base=[Math.cos(a)*d,-.04,Math.sin(a)*d];
-    const lean=[(Math.cos(a)*(.25+.7*r())+(r()-.5)*.5)*sp,0,(Math.sin(a)*(.25+.7*r())+(r()-.5)*.5)*sp];
-    const h=R0*(.55+.85*r());
+  /* Each blade arches out and over under its own weight, from a tilt that grows toward the tuft's edge,
+     and tapers to a point; most are short and a few long, and some are dead straw. The tuft's base is an
+     uneven oval, and the wind lays it a little to one side. Before, blades of much the same length rose
+     on gentle curves, ending in wide tips: a tuft was a dome with a smooth round outline, like a
+     hedgehog (the author, 23 November: "grassy plants are all round and look unrealistic"). */
+  const ell=.65+.5*r(), wa=r()*6.28318, wind=(1-st)*.22, wx=Math.cos(wa)*wind, wz=Math.sin(wa)*wind;
+  const n4=Math.round(N*.75);
+  for(let i=0;i<n4;i++){
+    const a=r()*6.28318,rr=Math.sqrt(r()),d=R0*base0*rr;
+    const base=[Math.cos(a)*d,-.04,Math.sin(a)*d*ell];
+    const L=R0*(.5+1.15*Math.pow(r(),1.8));
+    const th0=Math.min(1.1,(.1+.5*rr+.3*r())*sp), bend=(.3+1.*r())*(1-.8*st)*Math.min(1.3,sp);
+    const az=a+(r()-.5)*.9, hx=Math.cos(az), hz=Math.sin(az);
+    const dead=r()<.12;
+    const b0=dead?bright+.1+.1*r():bright+.3*(r()-.5), hu=dead?.98:Math.min(1,Math.max(.1,hue+.42*(r()-.5)));
+    const side=[-hz,0,hx];
     let p0=base;
-    const b0=bright+.3*(r()-.5),hu=Math.min(1,Math.max(.1,hue+.42*(r()-.5)));
-    const dn=v3.norm([lean[0]+.01,.6,lean[2]]);
-    for(let s=1;s<=3;s++){
-      const t=s/3,q=[base[0]+lean[0]*h*t*t*.72,h*t*(1-.22*t*(1-st)),base[2]+lean[2]*h*t*t*.72];
-      B.blade(p0,q,.052*(1.15-t*.8)*wd,dn,b0+.12*t,hu);
+    for(let s=1;s<=4;s++){
+      const t=s/4, th=Math.min(2.,th0+bend*t*t);
+      const dir=v3.norm([hx*Math.sin(th)+wx*t,Math.cos(th),hz*Math.sin(th)+wz*t]);
+      const q=v3.add(p0,v3.mul(dir,L/4));
+      B.blade(p0,q,.055*(1.08-.9*t)*wd,v3.norm(v3.add(v3.cross(side,dir),[0,.25,0])),b0+.12*t,hu);
       p0=q;
     }
   }

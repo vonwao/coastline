@@ -194,7 +194,7 @@ uniform vec3 uRo,uR,uU,uF,uSun,uRef,uSunE; uniform float uTan,uAspect,uDA,uDB,uM
 uniform vec2 uModel[11];
 uniform sampler2D tEnv;
 `+CLOUD_SHADOW+`
-out vec2 vUV; flat out vec3 vTint,vSky,vFogC,vBack; flat out vec4 vW; flat out float vLit,vFade,vHand,vFog,vAz,vRow,vNear,vLayer;
+out vec2 vUV; flat out vec3 vTint,vSky,vFogC,vBack; flat out vec4 vW; flat out float vLit,vFade,vHand,vFog,vAz,vRow,vNear,vLayer,vFlat;
 vec2 envUV(vec3 d){ return vec2(atan(d.z,d.x)/(2.*PI)+.5,asin(clamp(d.y,-1.,1.))/PI+.5); }
 const float E[5]=float[5](6.,18.,32.,50.,84.);
 void cull(){ gl_Position=vec4(2.,2.,2.,1.); vUV=vec2(0.); }
@@ -202,7 +202,7 @@ void main(){
   ivec2 idx=uOrigin+ivec2(gl_InstanceID%uGrid,gl_InstanceID/uGrid);
   vec2 ip=vec2(idx),wp=plantPos(ip);
   vec2 corner=vec2(float(gl_VertexID&1),float((gl_VertexID>>1)&1));
-  vFade=0.;vHand=1.;vTint=vec3(0.);vLit=0.;vAz=0.;vRow=0.;vNear=0.;vLayer=0.;vW=vec4(0.);vSky=vec3(0.);vFogC=vec3(0.);vFog=0.;vBack=vec3(0.);
+  vFade=0.;vHand=1.;vFlat=0.;vTint=vec3(0.);vLit=0.;vAz=0.;vRow=0.;vNear=0.;vLayer=0.;vW=vec4(0.);vSky=vec3(0.);vFogC=vec3(0.);vFog=0.;vBack=vec3(0.);
   vec2 toC=uRo.xz-wp; float dist=length(toC);
   if(dist>uMaxD){ cull(); return; }
   /* Close plants are drawn as full models instead, and hand over by dissolving. */
@@ -230,12 +230,30 @@ void main(){
   float el=asin(clamp(toV.y,-1.,1.))*57.29578, row=0.;
   for(int i=0;i<4;i++){ if(el>=E[i]) row=float(i)+clamp((el-E[i])/(E[i+1]-E[i]),0.,1.); }
   vRow=row; vNear=nearK; vLayer=float(model);
+  /* A preset's mats lie flat on the sand (fernCov). */
+  vFlat=uVeg>0&&uVegM.x>.5&&model==10?1.:0.;
   vec3 cr=normalize(cross(F,vec3(0.,1.,0.))),cu=cross(cr,F);
   /* Wider or squatter as the model is (plantVary); seen from above, the card's height is also width. */
   float cuK=mix(vary.y,vary.x,abs(F.y));
   vec3 pos=C+(cr*(corner.x-.5)*vary.x+cu*(corner.y-.5)*cuK)*rad*2.-F*rad*.32;
   float sway=sin(uTime*(model<2?1.1:.75)+yaw*6.4+wp.x*.03)*corner.y*corner.y;
   pos+=cr*sway*rad*.012*fade;
+  /* A mat lies on the sand, so its card does too: the view from above (row 4, first turn), laid flat and
+     turned as the plant is, which is what the full model looks like from any angle. Standing up and
+     facing the camera like the others, a mat covered far more sand than its model and looked like a dark
+     bush, and where the models took over near the camera the patch thinned out, along a line that moved
+     with the camera (the author, 22 November: "re-rendered differently so it almost looks like a wave"). The
+     view from above is drawn with the camera's right along the model's -z and its up along -x. */
+  if(vFlat>.5){
+    float cy=cos(yaw),sy=sin(yaw);
+    vec2 mxz=vec2(-(corner.y-.5),-(corner.x-.5))*rad*2.*vary.x;
+    vec2 off=vec2(cy*mxz.x-sy*mxz.y,sy*mxz.x+cy*mxz.y);
+    /* Tilted with the sand under it and lifted a hand's breadth, as its leaves are: laid level, most of it
+       sank into the slope of a dune and only a corner showed. */
+    float e=1.5, gx=(terrS(wp+vec2(e,0.)).r-terrS(wp-vec2(e,0.)).r)/(2.*e), gz=(terrS(wp+vec2(0.,e)).r-terrS(wp-vec2(0.,e)).r)/(2.*e);
+    pos=vec3(wp.x+off.x,ground+.1+.1*scale+gx*off.x+gz*off.y,wp.y+off.y);
+    vAz=0.; vRow=4.; vNear=0.;
+  }
   vec3 v=pos-uRo; float z=dot(v,uF);
   gl_Position=vec4(dot(v,uR)/(uTan*uAspect),dot(v,uU)/uTan,uDA*z+uDB,z); gl_Position.xy-=uJit*gl_Position.w;
   vUV=corner;
@@ -253,7 +271,7 @@ void main(){
 }`;
 const FS_CARDS=HEAD+PLANT_SHADE+`
 precision highp sampler2DArray;
-in vec2 vUV; flat in vec3 vTint,vSky,vFogC,vBack; flat in vec4 vW; flat in float vLit,vFade,vHand,vFog,vAz,vRow,vNear,vLayer; layout(location=0) out vec4 o;
+in vec2 vUV; flat in vec3 vTint,vSky,vFogC,vBack; flat in vec4 vW; flat in float vLit,vFade,vHand,vFog,vAz,vRow,vNear,vLayer,vFlat; layout(location=0) out vec4 o;
 uniform sampler2DArray tPA,tPL; uniform vec3 uSunE; uniform float uNoiseF;
 float h1(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
 void main(){
@@ -266,8 +284,11 @@ void main(){
   vec2 sc=vec2(1./12.,1./5.);
   vec2 gx=dFdx(vUV)*sc,gy=dFdy(vUV)*sc;
   float lod=.5*log2(max(dot(gx,gx),dot(gy,gy))*5760000.+1e-6);
-  /* The blend between views narrows to nothing with distance: one texture read for far plants. */
-  float w=mix(.001,.42,vNear);
+  /* Neighbouring views are blended wherever the view follows the camera (vNear above 0), fully: as the
+     camera moves, a plant turns smoothly from one view to the next. (The blend used to narrow with
+     distance, so plants 45 to 110 m off snapped from view to view, a ripple across the woods as the
+     camera passed.) Far plants keep one fixed view: one texture read. */
+  float w=vNear>0.?.42:.001;
   float a0=floor(vAz),r0=floor(vRow);
   float ka=smoothstep(.5-w,.5+w,vAz-a0),kr=smoothstep(.5-w,.5+w,vRow-r0);
   float a1=mod(a0+1.,12.),r1=min(r0+1.,4.);
@@ -280,7 +301,13 @@ void main(){
     l+=wt*textureGrad(tPL,tc,gx,gy);
   }
   /* Distant mip levels average in empty space, so accept thinner coverage there. */
-  if(s.a<mix(.56,.2,clamp(lod/5.,0.,1.))) discard;
+  /* A mat's card lies flat (VS_CARDS): its leaves are kept down to a thinner coverage, and from afar
+     the ground under it carries its green (the view shader). */
+  /* A mat's far views average its leaves with the sand between them: it is kept in that share of pixels,
+     different ones each frame, which the smoothing (or a film's samples) averages back, so from afar a
+     patch is as see-through as the full models near the camera, not a solid dark mat. */
+  if(vFlat>.5){ if(s.a<.06+.88*fract(52.9829189*fract(dot(gl_FragCoord.xy+5.588238*uNoiseF,vec2(.06711056,.00583715))))) discard; }
+  else if(s.a<mix(.56,.2,clamp(lod/5.,0.,1.))) discard;
   l/=s.a;
   vec3 m=s.rgb/s.a;
   vec3 L=plantShade(m.r,m.g,skyVis(m.b,l),dot(l,vW),vTint,vLit,vSky,vBack,uSunE);

@@ -90,8 +90,8 @@ void main(){
     float e0=C.x+C.w;
     float eE=E.x>EPS?E.x+E.w:e0,eW=W.x>EPS?W.x+W.w:e0,eN=N.x>EPS?N.x+N.w:e0,eS=S.x>EPS?S.x+S.w:e0;
     float sl=length(vec2(eE-eW,eN-eS))/(2.*uDx);
-    float deepG=smoothstep(uBreakD*1.0,uBreakD*1.5,C.x);
-    h+=(eE+eW+eN+eS-4.*e0)*smoothstep(.03,.10,sl)*mix(.025,.035,deepG)*min(uDt*60.,1.);
+    float deepG=smoothstep(uBreakD*.75,uBreakD*1.2,C.x);
+    h+=(eE+eW+eN+eS-4.*e0)*smoothstep(.12,.3,sl)*.035*deepG*min(uDt*60.,1.);
   }
   h=max(h,0.);
   /* Thin films soak into the sand */

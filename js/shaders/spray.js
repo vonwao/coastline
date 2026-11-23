@@ -86,15 +86,30 @@ void main(){
     /* The foot of a waterfall (fallMeasure in js/world.js): mist billowing out from where the water lands,
        and heavy drops thrown up. About 150 puffs of mist and 300 drops are born a second: each puff is
        several metres across and nearly clear, and more of them made a solid grey ball. */
-    if(P.w<=0.&&uFallFoot.w>0.){
+    /* The births: a fixed 4096 of the slots (1/16 of them live, 1/64 in high quality: uPerK is 65536 over
+       the number of slots) take the fall's particles, each born with a chance in proportion to the step's
+       length, about 1800 a second at a fall over a cliff. Before, every slot had a chance of about one in a
+       hundred thousand a step, too small for the hash to draw fairly: with the shorter steps and more
+       slots of a high-quality film it gave 14 times as many, and the mist at the foot came out as a
+       solid grey oval (23 November). */
+    if(P.w<=0.&&uFallFoot.w>0.&&h3(vec3(vec2(i)*.37+.11,7.)).x<uPerK/16.){
       vec3 qf=h3(r*517.+vec3(vec2(i)*.61,3.));
-      if(qf.x<.00013*uPerK*uFallFoot.w*min(uDt*60.,1.)){
+      if(qf.x<.45*uFallFoot.w*uDt){
         vec3 q=h3(qf*271.+vec3(i.yx,9.)), q2=h3(q*191.+2.);
         float ang=6.2832*q.x, rad=4.5*sqrt(q.y);
-        bool mist=q2.y<.33;
-        if(mist){ V.xyz=vec3(cos(ang)*(2.+4.*q2.x)+2.5,1.5+5.*q2.z,sin(ang)*(2.+4.*q2.x)); V.w=mix(.5,1.3,q.z); P.w=1.2+2.*q2.x; }
-        else { V.xyz=vec3(cos(ang)*(1.+3.*q2.z)+1.5,1.5+6.*q2.x*q2.x,sin(ang)*(1.+3.*q2.z)); V.w=mix(.04,.12,q.z*q.z); P.w=2.5; }
-        P.xyz=uFallFoot.xyz+vec3(cos(ang)*rad-1.5,.3+2.5*q2.z,sin(ang)*rad);
+        /* Mist only below a fall over a cliff. At a cascade's short drops the few puffs, each a metre or two
+           across, showed one by one as flakes flying in the air (the author, 23 November: "sometimes these huge
+           droplets at the bottom"); its foam on the pool (FS_FOAM) and fine drops are enough. */
+        bool mist=uFallFoot.w>.5&&q2.y<.16;
+        /* The mist billows out slowly and stays low, larger puffs close together, so it reads as one cloud
+           at the foot; thrown out fast, puffs flew apart and showed one by one as white chips. */
+        if(mist){ V.xyz=vec3(cos(ang)*(1.2+2.4*q2.x)+1.,.3+1.4*q2.z,sin(ang)*(1.2+2.4*q2.x)); V.w=mix(1.1,2.4,q.z); P.w=1.4+1.6*q2.x; }
+        /* Drops a few millimetres across, as a waterfall throws them (they were 8 to 24 cm, sized like the
+           sea's spray, and the author saw "HUGE droplets flying in the air" at the Alpine lake's cascade, 22
+           November). Too small to see one by one from a drone: drawn a pixel wide and faint, they read as a
+           glitter in the spray. A cascade's short drops (uFallFoot.w below 1) throw them lower and nearer. */
+        else { float k=mix(.45,1.,uFallFoot.w); V.xyz=vec3(cos(ang)*(1.+3.*q2.z)*k+1.5*k,(1.5+6.*q2.x*q2.x)*k,sin(ang)*(1.+3.*q2.z)*k); V.w=mix(.002,.006,q.z*q.z); P.w=1.6+.9*k; }
+        P.xyz=uFallFoot.xyz+vec3(cos(ang)*rad*(mist?1.6:1.)-1.5,.3+(mist?1.2:2.5)*q2.z,sin(ang)*rad*(mist?1.6:1.));
       }
     }
   }

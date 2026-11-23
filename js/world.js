@@ -125,7 +125,7 @@ const BOULDER_V=new URLSearchParams(location.search).get('boulders')==='1'?0:1;
 async function bakeTerrain(tex,type,seed,min,size,near,tiles,form=0,half=0,gentle=null,fall=null){
   const f=makeFBO(tex);
   const TP=form>=3?PR.terrainMix:PR['terrain'+type];
-  const U={tNoise:noiseTex,uMin:min,uSize:size,uSeed:seed,uType:type,uForm:form,uHalf:half,uNear:near?1:0,uTexel:size[0]/tex.w,uFall:(fall=(Array.isArray(fall)?fall:[fall]).find(x=>x&&!x.far))?[fall.z,1,fall.x,0]:[0,0,0,0],...(form>=3?{uBoulderV:BOULDER_V}:{})};
+  const U={tNoise:noiseTex,uMin:min,uSize:size,uSeed:seed,uType:type,uForm:form,uHalf:half,uNear:near?1:0,uTexel:size[0]/tex.w,uFall:(fall=(Array.isArray(fall)?fall:[fall]).find(x=>x&&!x.far))?[fall.z,1,fall.x,fall.kind==='cascade'?1:0]:[0,0,0,0],...(form>=3?{uBoulderV:BOULDER_V}:{})};
   use(TP,U);
   gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.viewport(0,0,tex.w,tex.h);
   gl.enable(gl.SCISSOR_TEST);
@@ -297,9 +297,11 @@ function fallMeasure(L){
     /* A fall over a cliff gets its water as a sheet in the air (fallPath, below). */
     const geo=kind===0?fallPath(L,a,xOf,iOf,lip,foot,dir,Fl.z):null;
     L.falls.push({kind,geo,A:[xOf(lip),H(lip),Fl.z,1],B:[fx,0,Fl.x??xOf(lip),0],C:[dir,kind===2?.9:kind===1?1.6:1,kind===2?30:250,kind],
-      foot:[fx+2.5*dir,.3,Fl.z,kind===1?.3:1],inDomain,drop:H(lip),far});
+      foot:[fx+2.5*dir,.3,Fl.z+(kind===1?cascadeWander(fx-(Fl.x??xOf(lip))):0),kind===1?.3:1],inDomain,drop:H(lip),far});
   }
 }
+/* How far a cascade's channel has wandered from its line at dx from Fl.x (fallZ in the land and view shaders). */
+function cascadeWander(dx){ return 6*Math.sin(dx*.032+.7)+2.5*Math.sin(dx*.097+2.1); }
 /* The path of a fall's water through the air (drawFalls in js/frame.js; VS_FALL in js/shaders/fall.js),
    along the stream's line, from the land's heights there (a, one row of the land texture). It leaves the
    cliff's edge (where the ground first drops 1.5 m below the lip) at 2.4 m/s and falls freely; where it
@@ -326,6 +328,27 @@ function fallPath(L,a,xOf,iOf,lip,foot,dir,z){
   }
   pts.push([x,0,t]);
   if(pts.length<4) return null;
+  /* The curtain hangs from the rock's outer edges as one smooth line. Followed exactly, the path ran along
+     the top of every ledge and down the next step, so the sheet came out as a ladder of white strips with
+     gaps (the author, 23 November: "water going down looks very unrealistic"). Every 0.5 m of height, the
+     furthest out the path is at that height (where it crosses it), then the furthest out within 2 m above
+     or below, then an average over 2 m: the water clears each ledge's edge and falls on, as a real curtain
+     does, its time since the lip kept from the path. */
+  const top=pts[0][1], Ys=[], Xs=[], Ts=[];
+  for(let yy=top;yy>=0;yy-=.5){
+    let bx=null,bt=0;
+    for(let i=1;i<pts.length;i++){ const p=pts[i-1],q=pts[i]; if((p[1]-yy)*(q[1]-yy)>0) continue;
+      const k=Math.abs(p[1]-q[1])<1e-6?0:(p[1]-yy)/(p[1]-q[1]), xx=p[0]+(q[0]-p[0])*k, ox=dir*xx;
+      if(bx===null||ox>bx){ bx=ox; bt=p[2]+(q[2]-p[2])*k; } }
+    if(bx!==null){ Ys.push(yy); Xs.push(bx); Ts.push(Ts.length?Math.max(bt,Ts[Ts.length-1]+.001):bt); }
+  }
+  if(Ys.length>=4){
+    const n=Ys.length, M=Xs.map((_,i)=>Math.max(...Xs.slice(Math.max(0,i-4),i+5)));
+    const S=M.map((_,i)=>{ const w=M.slice(Math.max(0,i-4),i+5); return w.reduce((a,b)=>a+b,0)/w.length; });
+    /* The first metres keep the arc off the lip as it was. */
+    pts.length=0;
+    for(let i=0;i<n;i++){ const k=Math.min(1,(top-Ys[i])/3); pts.push([dir*(Xs[i]*(1-k)+S[i]*k),Ys[i],Ts[i]]); }
+  }
   const d=new Float32Array(pts.length*2*9);
   pts.forEach((p,i)=>{
     const q=pts[Math.min(i+1,pts.length-1)], r=pts[Math.max(i-1,0)], tg=[q[0]-r[0],q[1]-r[1],0];
@@ -384,11 +407,15 @@ async function buildLocation(L,progress,gentle=null){
   L.terr=makeTex(nearW,nearH,{mips:true,aniso:4});
   /* Half floats keep heights to about one part in 2000: fine for coasts, but on a 2000 m mountain that is
      a metre, and slopes came out as stairs, with saw-toothed ridges. Mountains get full floats. */
-  L.terrF=makeTex(FAR_RES,FAR_RES,{mips:true,aniso:4,fmt:L.maxH>1000?'RGBA32F':'RGBA16F'});
+  /* A coast can ask for a finer far map (farRes, 2048 for steps of 8.3 m instead of 16.6). Tried on the
+     Alpine lake, 23 November, for the saw-toothed ridges: no visible change. The teeth are the outline's
+     own pixel steps, which the live smoothing and the films' 4K drawing soften, so it was left at 1024. */
+  const farRes=L.farRes||FAR_RES;
+  L.terrF=makeTex(farRes,farRes,{mips:true,aniso:4,fmt:L.maxH>1000?'RGBA32F':'RGBA16F'});
   if(L.real){ await bakeRealTerrain(L,L.terr,true); progress(.25); await bakeRealTerrain(L,L.terrF,false); } else {
   await bakeTerrain(L.terr,L.type,L.seed,L.domMin,L.domSize,true,4,L.form||0,L.domSize[1]*.5,gentle,L.fall);
   progress(.25); L.phase='far terrain';
-  await bakeTerrain(L.terrF,L.type,L.seed,[-FAR_SPAN*.5+L.domMin[0]+L.domSize[0]*.5,-FAR_SPAN*.5],[FAR_SPAN,FAR_SPAN],false,2,L.form||0,L.domSize[1]*.5,gentle,L.fall);
+  await bakeTerrain(L.terrF,L.type,L.seed,[-FAR_SPAN*.5+L.domMin[0]+L.domSize[0]*.5,-FAR_SPAN*.5],[FAR_SPAN,FAR_SPAN],false,2*farRes/FAR_RES,L.form||0,L.domSize[1]*.5,gentle,L.fall);
   }
   L.farMin=[-FAR_SPAN*.5+L.domMin[0]+L.domSize[0]*.5,-FAR_SPAN*.5];
   L.phase='textures';

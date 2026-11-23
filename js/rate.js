@@ -12,8 +12,15 @@
      - "Save ratings" writes them all to a file, coastline-ratings-<date>.json, in the Downloads folder.
    Ratings are kept in this browser (localStorage), as favourites are: each browser has its own until
    they are saved to a file. Not in the checks (?test) or in Wallpaper Engine. */
-const RATE_KEY='coastline-ratings-v1';
-function loadRatings(){ try{ return JSON.parse(localStorage.getItem(RATE_KEY))||[]; }catch(e){ return []; } }
+/* Kept under a name of their own. They were under 'coastline-ratings-v1', the name the films page
+   (tools/watch.html) already used for its clip ratings, in another form: opened from the project folder,
+   where both pages share the browser's storage, Save found the films page's ratings there and failed
+   without a word (the author, 23 November: "the save button ... doesn't work now"). Ratings already saved under
+   the old name (the public page has no films page) are moved over once; the films page's are left alone. */
+const RATE_KEY='coastline-scene-ratings-v1', RATE_OLD='coastline-ratings-v1';
+try{ if(localStorage.getItem(RATE_KEY)===null){ const o=JSON.parse(localStorage.getItem(RATE_OLD)||'null');
+  if(Array.isArray(o)){ localStorage.setItem(RATE_KEY,JSON.stringify(o)); localStorage.removeItem(RATE_OLD); } } }catch(e){}
+function loadRatings(){ try{ const a=JSON.parse(localStorage.getItem(RATE_KEY)); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
 function saveRatings(a){ try{ localStorage.setItem(RATE_KEY,JSON.stringify(a)); return true; }catch(e){ return false; } }
 (function(){
   if(TEST) return;
@@ -42,7 +49,9 @@ function saveRatings(a){ try{ localStorage.setItem(RATE_KEY,JSON.stringify(a)); 
   #rate .item .s{color:#f2c14e;font-size:14px}
   #rate .item .c{color:#e4eef0;white-space:pre-wrap;word-break:break-word}
   #rate .item .row{margin-top:4px}
-  #rate .item .row button{padding:2px 8px;font-size:12px}`;
+  #rate .item .row button{padding:2px 8px;font-size:12px}
+  #rate h4{margin:14px 0 4px;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#7f969d}
+  #rate .item.fav{margin-top:6px;padding-top:6px}`;
   document.head.appendChild(st);
   const btn=document.createElement('button'); btn.id='rateBtn'; btn.textContent='★ Rate'; document.body.appendChild(btn);
   const P=document.createElement('div'); P.id='rate'; P.hidden=true; document.body.appendChild(P);
@@ -74,6 +83,8 @@ function saveRatings(a){ try{ localStorage.setItem(RATE_KEY,JSON.stringify(a)); 
     setTimeout(()=>P.querySelector('textarea')?.focus(),30);
   }
   function close(){ P.hidden=true; cur=null; if(!wasPaused) state.paused=false; }
+  /* The menu's "Your picks": the list, without stopping the scene. */
+  window.openPicks=()=>{ wasPaused=state.paused; cur=null; view='list'; draw(); P.hidden=false; btn.classList.remove('show'); };
   function store(){
     if(!cur||(!cur.rating&&!cur.comment.trim())){ close(); return; }
     const all=loadRatings();
@@ -101,8 +112,16 @@ function saveRatings(a){ try{ localStorage.setItem(RATE_KEY,JSON.stringify(a)); 
   function draw(){
     const all=loadRatings();
     if(view==='list'){
-      P.innerHTML=`<div class="top"><b>Your ratings (${all.length})</b><button class="x" data-do="close" title="Close (Esc)">×</button></div>
-        <p>Kept in this browser. "Save ratings" writes them to a file in your Downloads folder.</p>
+      /* Your picks: the ratings, then the favourites (L), in one place (the author, 22 November: two separate
+         "I like this" systems, and the favourites had no list on screen). */
+      const favs=loadFavs();
+      P.innerHTML=`<div class="top"><b>Your picks</b><button class="x" data-do="close" title="Close (Esc)">×</button></div>
+        <p>Kept in this browser. R rates the scene on screen, L adds it to your favourites.</p>
+        <h4>Favourites (${favs.length})</h4>
+        <div class="row"><button data-do="favonly" class="${state.favOnly?'main':''}">${state.favOnly?'Playing favourites only':'Play favourites only'}</button><button data-do="favfile">Save favourites</button></div>`+
+        favs.slice().reverse().map(F=>`<div class="item fav"><div class="t"><div>♥ ${esc(F.loc)} · ${esc(F.kind)} · ${esc(LIGHTS[F.lightKey]?.label||F.lightKey)}</div>
+          <div class="row"><button data-do="favshow" data-id="${F.id}">Show</button><button data-do="favdel" data-id="${F.id}">Remove</button></div></div></div>`).join('')+
+        `<h4>Ratings (${all.length})</h4>
         <div class="row"><button data-do="back">Rate this scene</button><button class="main" data-do="file">Save ratings</button></div>`+
         all.slice().reverse().map(r=>`<div class="item">${r.thumb?`<img src="${r.thumb}" alt="">`:'<img alt="">'}<div class="t">
           <div class="s">${'★'.repeat(r.rating||0)}<span style="color:#56656b">${'★'.repeat(5-(r.rating||0))}</span></div>
@@ -130,6 +149,10 @@ function saveRatings(a){ try{ localStorage.setItem(RATE_KEY,JSON.stringify(a)); 
     else if(k==='file') saveFile();
     else if(k==='again'){ const r=loadRatings().find(x=>x.id===b.dataset.id); if(r) again(r); }
     else if(k==='del'){ saveRatings(loadRatings().filter(x=>x.id!==b.dataset.id)); draw(); }
+    else if(k==='favonly'){ toggleFavOnly(); draw(); }
+    else if(k==='favfile') exportFavs();
+    else if(k==='favshow'){ const F=loadFavs().find(x=>x.id===b.dataset.id); if(F){ close(); showFav(F); } }
+    else if(k==='favdel'){ saveFavs(loadFavs().filter(x=>x.id!==b.dataset.id)); draw(); }
   });
   /* Keys typed in the panel are its own; Esc closes it, Ctrl+Enter saves. */
   P.addEventListener('keydown',e=>{ if(e.key==='Escape') close(); else if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)) store(); e.stopPropagation(); });

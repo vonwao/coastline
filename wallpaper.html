@@ -84,7 +84,7 @@ const BEACHES=[
   ['Biarritz, France',43.48,-1.56,300],
 ];
 const $=id=>document.getElementById(id);
-for(const [n,la,lo,f] of BEACHES){ const o=document.createElement('option'); o.value=[la,lo,f].join(','); o.textContent='Follow '+n+', live'; $('beach').append(o); }
+for(const [n,la,lo,f] of BEACHES){ const o=document.createElement('option'); o.value=[la,lo,f].join(','); o.textContent='A real beach: '+n; $('beach').append(o); }
 function build(){
   const u=new URL('index.html',location.href); u.search=''; u.hash='';
   u.searchParams.set('calm','1');

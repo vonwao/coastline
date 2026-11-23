@@ -13,7 +13,7 @@
      milliseconds, whether or not the frame was on time. Per coast and kind of shot, the cost per million
      pixels is remembered (RH.hist, kept in this browser), so the next such shot starts at the right rate
      and size. A shot never seen before starts from the average of its kind.
-   - At a cut (rhythmCut): 60 a second if the shot is expected to fit in RH_FIT[60] ms at RH_S60 of the
+   - At a cut (rhythmCut): 60 a second if the shot is expected to fit in RH_FIT[60] ms at RH_PROXY.S60 of the
      full size or more; otherwise 30, at the largest size expected to fit in RH_FIT[30] ms. The size only
      changes at a cut, where it can't be seen, and not for small differences (making the targets again
      holds the picture for about a tenth of a second).
@@ -40,7 +40,11 @@ const RH_KEY='coastline-rhythm-v2';
 /* A shot gets a rate if it is expected to cost less than this (ms); the rest of the refresh is left for
    the browser and for costs that vary along the camera's path. Mid-shot it loses the rate above RH_OUT. */
 const RH_FIT={60:13.5,30:28.5,20:45}, RH_OUT={60:15,30:31.5,20:1e9};
-const RH_S60=+(Q.get('min60')||.6), RH_SMIN=.5;
+/* The smallest sizes, as shares of a 2560-wide canvas: on a larger one (a 4K screen) the same number of
+   pixels is a smaller share. */
+const RH_S60_=+(Q.get('min60')||.6), RH_SMIN_=.5;
+function rhBase(){ return Math.min(1,2560/Math.max(canvas.width,1)); }
+const RH_PROXY={get S60(){ return RH_S60_*rhBase(); },get SMIN(){ return RH_SMIN_*rhBase(); }};
 const RH={fix:9,on:false,ext:null,active:null,rec:null,q:[],bq:[],unit:{},hist:{},gpu:'',saveT:0,used:0,starve:0,lastNow:0,lastS:null};
 function rhythmInit(){
   RH.on=!TEST;
@@ -73,10 +77,10 @@ function rhythmCut(S,resize,also){
   const c=rhythmCostMP(S), guess=!RH.hist[rhythmKey(S)];
   let rate=FPS_FIX, s=state.scale;
   if(resize&&!Q.has('res')){
-    if(!rate) rate=rhythmFit(c,60)>=RH_S60?60:30;
-    let want=Math.min(1,Math.max(RH_SMIN,rhythmFit(c,rate>=45?60:rate>=25?30:20)));
+    if(!rate) rate=rhythmFit(c,60)>=RH_PROXY.S60?60:30;
+    let want=Math.min(1,Math.max(RH_PROXY.SMIN,rhythmFit(c,rate>=45?60:rate>=25?30:20)));
     const alone=want;
-    if(also&&also.rh&&also.rh.n>=8){ const r=capFor(also), a=state.scale*Math.sqrt(Math.max(RH_FIT[r>=45?60:r>=25?30:20]-RH.fix,1)/Math.max(also.rh.hi-RH.fix,1)); want=Math.min(want,Math.max(RH_SMIN,a)); }
+    if(also&&also.rh&&also.rh.n>=8){ const r=capFor(also), a=state.scale*Math.sqrt(Math.max(RH_FIT[r>=45?60:r>=25?30:20]-RH.fix,1)/Math.max(also.rh.hi-RH.fix,1)); want=Math.min(want,Math.max(RH_PROXY.SMIN,a)); }
     /* The present size stays unless it is too big, or more than a tenth smaller than it could be. */
     if(s>want||s<want*.9) s=Math.floor(want*50)/50;
     /* Held down for the shot it dissolves from: it may grow once that one has gone (frame, js/frame.js). */
@@ -115,7 +119,7 @@ function rhythmSample(S,ms){
        next rate down to its end. */
     const s=fit(h.ema);
     /* (In calm mode the shot stays on screen through a long dissolve after its end.) */
-    if(may&&(left>3||CALM)&&s>=(r===60?RH_S60:RH_SMIN)) resize(s);
+    if(may&&(left>3||CALM)&&s>=(r===60?RH_PROXY.S60:RH_PROXY.SMIN)) resize(s);
     else if(r>20){ S.rate=r===60?30:20; h.n=0; h.skip=2; rhythmNote(S); }
   }
   /* Much cheaper than expected, with a long stretch still to come: a larger picture. */

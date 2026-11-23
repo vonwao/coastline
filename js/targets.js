@@ -37,6 +37,9 @@ function allocRT(w,h){
 function resizeCanvas(){
   const dpr=Math.min(window.devicePixelRatio||1,2);
   let cw=Math.round(innerWidth*dpr),ch=Math.round(innerHeight*dpr);
-  const lim=+(Q.get('maxw')||2560); if(cw>lim){ ch=Math.round(ch*lim/cw); cw=lim; }
+  /* The canvas matches the screen up to 3840 wide (a 4K screen), so the picture is stretched to it once,
+     by the last pass's filter (FS_FINAL), instead of by it to 2560 and then again by the browser. How many
+     pixels are drawn is set by the rhythm (js/rhythm.js), not by this. */
+  const lim=+(Q.get('maxw')||3840); if(cw>lim){ ch=Math.round(ch*lim/cw); cw=lim; }
   if(canvas.width!==cw||canvas.height!==ch){ canvas.width=cw; canvas.height=ch; }
 }

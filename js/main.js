@@ -105,6 +105,9 @@ async function main(){
   setTimeout(()=>document.getElementById('load').remove(),600);
   if(!CALM&&!REEL_LIVE.on){ const hint=document.getElementById('hint'); hint.style.opacity=.55; setTimeout(()=>hint.style.opacity=0,6000); }
   if(RESUME?RESUME.sound:Q.has('sound')) soundAuto();
+  /* A beach picked before (B) is followed again without being asked, so say so: the author, 22 November, saw
+     only night scenes opening the page, because it was night at a beach he had once picked. */
+  if(LIVE.on&&!REEL_LIVE.on&&!window.IN_WALLPAPER) setTimeout(()=>toast(`Following ${LIVE.name||'a real beach'}: its sea and sky as they are now. B to change, or see the Menu`,8000),1200);
   try{ sessionStorage.removeItem('coastline-resume'); }catch(e){}
   window.COAST.compileMs=tCompile; window.COAST.loadMs=performance.now()-t0; window.COAST.ready=true;
   requestAnimationFrame(frame);

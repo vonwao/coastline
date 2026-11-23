@@ -22,23 +22,25 @@ function beachSaved(){ try{ return JSON.parse(localStorage.getItem(BEACH_STORE)|
      their light and waves every 30 minutes. (A reel sets each movie's own sea and sky. With a beach saved
      in this browser, a reel used to start with the forecast's swell in place of each coast's own, and with
      the plants of the beach's region: vegOf in js/vegetation.js.) */
-  if(b&&!LIVE.on&&!Q.has('test')&&!Q.has('live')&&!Q.has('studio')&&!Q.has('recipe')&&!Q.has('preset')&&!Q.has('reel')){ Object.assign(LIVE,{on:true,lat:b.lat,lon:b.lon,facing:b.facing??null}); LIVE.name=b.name; }
+  /* Nor when the address asks for a light of its own (the menu's times of day, ?light=) or the clock: the
+     saved beach used to win over those, so "Sunrise" showed the beach's real light (found 22 November). */
+  if(b&&!LIVE.on&&!LIVE.clock&&!Q.has('test')&&!Q.has('live')&&!Q.has('studio')&&!Q.has('recipe')&&!Q.has('preset')&&!Q.has('reel')&&!Q.has('light')&&!Q.has('clock')&&!Q.has('hour')){ Object.assign(LIVE,{on:true,lat:b.lat,lon:b.lon,facing:b.facing??null}); LIVE.name=b.name; }
 })();
 
 const BP=document.createElement('div');
 BP.id='beach'; BP.hidden=true;
-BP.innerHTML=`<b>Follow a real beach</b><div id="bpNow"></div>
+BP.innerHTML=`<b>A real beach</b><div id="bpNow"></div>
 <div id="bpList"></div>
 <form id="bpForm"><input id="bpQ" placeholder="Search for a place" autocomplete="off"><button>Search</button></form>
 <div id="bpRes"></div>
 <label>Faces out to sea: <select id="bpFace">${FACINGS.map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select></label>
-<button id="bpOff">Made-up sea</button>
-<p>The sea and sky follow the forecast there (from Open-Meteo.com); the coast itself is made up. The way the beach faces decides where the sun rises and sets. B or Esc closes this.</p>`;
+<button id="bpOff">Stop: back to the made-up coasts</button>
+<p>The sea and sky follow that beach as it is now: its time of day, weather and waves (from Open-Meteo.com); the coast itself is made up. The beach is remembered for next time, until you stop it here. The way it faces decides where the sun rises and sets. B or Esc closes this.</p>`;
 document.body.append(BP);
 const bp=id=>document.getElementById(id);
 
 function beachDraw(){
-  bp('bpNow').textContent=LIVE.on?`Now: ${LIVE.name||LIVE.lat.toFixed(2)+', '+LIVE.lon.toFixed(2)}${LIVE.info?' ('+LIVE.info+')':''}`:'Now: a made-up sea';
+  bp('bpNow').textContent=LIVE.on?`Following: ${LIVE.name||LIVE.lat.toFixed(2)+', '+LIVE.lon.toFixed(2)}${LIVE.info?' ('+LIVE.info+')':''}`:'Now: the made-up coasts';
   bp('bpList').replaceChildren(...BEACHES.map(b=>beachButton(b,b.name)));
 }
 function beachButton(b,label){
@@ -54,7 +56,7 @@ async function beachGo(b){
   if(REEL_LIVE.on){
     try{ if(b) localStorage.setItem(BEACH_STORE,JSON.stringify({name:b.name,lat:b.lat,lon:b.lon,facing:fv!==''?+fv:b.facing??null})); else localStorage.removeItem(BEACH_STORE); }catch(e){}
     if(!b) liveStop();
-    toast(b?b.name+' is remembered for next time: a reel has its own sea and sky':'A made-up sea');
+    toast(b?b.name+' is remembered for next time: a reel has its own sea and sky':'Back to the made-up coasts');
     beachDraw();
     return;
   }
@@ -67,7 +69,7 @@ async function beachGo(b){
     await liveStart(b.lat,b.lon,facing,b.name);
   } else {
     try{ localStorage.removeItem(BEACH_STORE); }catch(e){}
-    liveStop(); toast('A made-up sea');
+    liveStop(); toast('Back to the made-up coasts');
   }
   beachDraw();
   if(state.cur&&!state.next) cutTo(chooseNext(state.cur),CALM?rnd(3,4.5):1.2);

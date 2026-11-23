@@ -110,7 +110,9 @@ in vec2 vUV; layout(location=0) out vec4 o; uniform vec2 uMin,uSize; uniform flo
    its stream runs (x), whether there is one (y), and about where the cliff's lip is (z). The stream runs
    straight out to sea near the cliff and wanders a little further inland; view.js has the same line. */
 uniform vec4 uFall;
-float fallZ(float x){ return uFall.x+5.*sin((x-uFall.z)*.05)*smoothstep(-20.,-80.,x-uFall.z); }
+/* A cascade (uFall.w 1) wanders from side to side all the way down, as streams do: straight, it read as a
+   chute (the author, 23 November: "Waterfall is very straight"). The same line as fallZ in js/shaders/view.js. */
+float fallZ(float x){ float dx=x-uFall.z; return uFall.x+5.*sin(dx*.05)*smoothstep(-20.,-80.,dx)+(uFall.w>.5?6.*sin(dx*.032+.7)+2.5*sin(dx*.097+2.1):0.); }
 `+FAR_BEND+`
 float fine(vec2 p,int o1,int o2){ return uNear>.5?fbm(p,o2):fbm(p,o1); }
 float bn(vec2 p){ return fbm(p,3); }
@@ -239,9 +241,16 @@ vec4 rockyRaw(vec2 p){
        down the face. Nothing grows in it. */
     float fk=0.;
     if(uFall.y>.5){
-      float fz=p.y-fallZ(p.x);
-      fk=exp(-fz*fz/mix(9.,30.,prof))*(1.-smoothstep(150.,260.,-d));
-      h-=fk*(1.3*(1.-prof)+2.4*prof+2.2*smoothstep(.5,1.,prof)*(1.-smoothstep(W,W+30.,-d)));
+      /* Across the top, a shallow, uneven bed with banks that come and go, not a deep even V: it read as a
+         gutter (the author, 23 November: "the river/stream looks terrible"). The notch at the lip stays. */
+      /* A wide, shallow hollow (about 8 m to each side) with a narrow channel in its floor; only at the lip a
+         deeper notch. It was one cut, 3 m wide and up to 4.6 m deep near the edge: a V-shaped slot. */
+      float fz=p.y-fallZ(p.x)+1.6*(fbm(q/9.,3)-.5);
+      float run=1.-smoothstep(150.,260.,-d);
+      float fkW=exp(-fz*fz/128.)*run, fkN=exp(-fz*fz/6.4)*run;
+      float notch=smoothstep(.5,1.,prof)*(1.-smoothstep(W,W+30.,-d));
+      h-=fkW*(.4+1.4*prof)+fkN*(.45+.35*fbm(q/17.,3))+exp(-fz*fz/mix(14.,30.,prof))*run*2.2*notch;
+      fk=max(fkN,fkW*.35);
     }
     float inl=smoothstep(W+5.,W+24.,-d+12.*(fbm(q/31.,3)-.5));
     veg=inl*(.42+.92*fbm(q/23.,4))*(1.-fk);
@@ -328,7 +337,9 @@ in vec2 vUV; layout(location=0) out vec4 o; uniform vec2 uMin,uSize; uniform flo
 uniform float uBoulderV;
 /* A coast's waterfall, as in FS_TERRAIN above. */
 uniform vec4 uFall;
-float fallZ(float x){ return uFall.x+5.*sin((x-uFall.z)*.05)*smoothstep(-20.,-80.,x-uFall.z); }
+/* A cascade (uFall.w 1) wanders from side to side all the way down, as streams do: straight, it read as a
+   chute (the author, 23 November: "Waterfall is very straight"). The same line as fallZ in js/shaders/view.js. */
+float fallZ(float x){ float dx=x-uFall.z; return uFall.x+5.*sin(dx*.05)*smoothstep(-20.,-80.,dx)+(uFall.w>.5?6.*sin(dx*.032+.7)+2.5*sin(dx*.097+2.1):0.); }
 /* Noise from the baked texture: as good for shapes this size, and it keeps the shader small. Full
    noise functions get unrolled by the D3D compiler, and this shader took a minute to compile with them. */
 float fa(vec2 p){ return textureLod(tNoise,p/4.,0.).r; }
@@ -492,6 +503,10 @@ vec4 mixedCoast(vec2 p){
     float peak=mix(-1.,mix(4.,12.,rk),kk*kk);
     float bump=-6.5+(peak+6.5)*pow(1.-max(rd,0.)*max(rd,0.),.42)+ledge*.6;
     bump=min(bump,peak*(.62+.3*jt.x)+.4*ledge);
+    /* In the lake, islets are low rounded domes of rock smoothed by the glacier that dug the valley, not
+       sea stacks: a sheer, flat-topped pillar there "looks exactly like the rocks in the ocean" (the author,
+       23 November). */
+    if(uForm==6){ float pk=mix(-1.,4.5,kk*kk); bump=-5.+(pk+5.)*pow(1.-max(rd,0.)*max(rd,0.),1.3); }
     bump=mix(-8.,bump,zoneK);
     if(bump>h){ h=bump; sand=0.; }
   }
@@ -522,13 +537,20 @@ vec4 mixedCoast(vec2 p){
   if(uFall.y>.5&&d<0.){
     float fz=p.y-fallZ(p.x), u=-d;
     float fk=exp(-fz*fz/mix(14.,40.,smoothstep(0.,120.,u)))*(1.-smoothstep(150.,230.,u))*smoothstep(1.,6.,u);
-    /* Trees keep about 9 m back from the water, so the cascade isn't hidden in the forest. */
-    float vk=exp(-fz*fz/150.)*(1.-smoothstep(150.,230.,u));
-    veg*=1.-vk;
+    /* Plants thin out toward the water, so the cascade isn't hidden in the forest, but grow down to its
+       banks: cleared 9 m each side, the banks were a wide strip of bare pale rock, like a ditch. */
+    float vk=exp(-fz*fz/30.)*(1.-smoothstep(150.,230.,u));
+    veg*=1.-.85*vk;
     if(fk>.002){
+      /* The steps are uneven, from about 2 to 14 m: laid out every 8 m in a height that is stretched and
+         squeezed as it rises (the stretch never folds back, so the bed still only goes down). An even
+         8 m stair read as built. */
       const float ST=8.;
-      float hs=(floor(h/ST)+pow(fract(h/ST),10.))*ST;
-      h=mix(h,hs-1.6,fk); sand*=1.-fk;
+      float hw=h+2.2*sin(h*.17)+.9*sin(h*.43+2.);
+      float hs=h+((floor(hw/ST)+pow(fract(hw/ST),10.))*ST-hw);
+      /* Boulders in the bed and along its banks, a metre or two across: smooth, the cut read as a ditch. */
+      float bo=1.3*(fa(q/2.6+7.1)-.5)+.7*(fa(q/1.1+3.3)-.5);
+      h=mix(h,hs-1.6,fk)+bo*smoothstep(.05,.5,fk); sand*=1.-fk;
     }
   }
   float rockK=1.-sand;
@@ -540,7 +562,7 @@ vec4 mixedCoast(vec2 p){
   /* Ledges and jointed blocks belong to sea cliffs. On the lake's mountains the ledges made whole faces
      stripy, and on ridges seen edge-on every 30 m block stood up as a tooth, so above the shore rocks
      both fade out. */
-  float ledgeK=uForm==6?1.-smoothstep(15.,40.,h):1.;
+  float ledgeK=uForm==6?(1.-smoothstep(15.,40.,h))*(d>=0.?.25:1.):1.;
   /* Big blocks before the ledges, as in rockyRaw(), so their corners don't poke out as teeth. */
   h+=rel.x*smoothstep(.8,5.,hIn)*vK*mix(1.,.34,wall)*ledgeK;
   if(h>1.5&&veg<.5&&uForm!=5&&ledgeK>0.){

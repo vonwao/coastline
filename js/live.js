@@ -220,12 +220,12 @@ async function liveUpdate(){
   const req=++LIVE.req, lat=LIVE.lat, lon=LIVE.lon, stale=()=>req!==LIVE.req||!LIVE.on||LIVE.lat!==lat||LIVE.lon!==lon;
   /* Failures are retried every 5 minutes; only the first of a run is shown, so a long outage doesn't
      flash a message on the screen every 5 minutes. */
-  let r; try{ r=await liveFetch(); }catch(e){ if(stale()) return; console.warn('[live] forecast failed:',e.message); if(!LIVE.fails++) toast('Real conditions: could not reach Open-Meteo'); LIVE.next=performance.now()+5*60*1000; return; }
+  let r; try{ r=await liveFetch(); }catch(e){ if(stale()) return; console.warn('[live] forecast failed:',e.message); if(!LIVE.fails++) toast('A real beach: could not reach Open-Meteo for the forecast'); LIVE.next=performance.now()+5*60*1000; return; }
   if(stale()) return;
   LIVE.fails=0;
   if(r.utcOff!=null) LIVE.utcOff=r.utcOff;
   const H=r.m.swell_wave_height??r.m.wave_height, T=r.m.swell_wave_period??r.m.wave_period, dir=r.m.swell_wave_direction??r.m.wave_direction;
-  if(H==null||T==null){ toast('Real conditions: no wave data for that place (is it on the coast?)'); return; }
+  if(H==null||T==null){ toast('A real beach: no wave data for that place (is it on the coast?)'); return; }
   /* Swell comes in from the open sea, so its direction is roughly the way the beach faces. */
   if(LIVE.facing==null&&dir!=null) LIVE.facing=dir;
   /* Coast type from the sea state, then the simulated swell set to match. The direction is only used
@@ -242,6 +242,6 @@ async function liveUpdate(){
   LIVE.wx={cloud:r.w.cloud_cover??40,wind:r.w.wind_speed_10m??10,rain:r.w.precipitation??0};
   LIVE.seed++;
   LIVE.info=`waves ${H.toFixed(1)} m every ${T.toFixed(0)} s, cloud ${LIVE.wx.cloud}%, wind ${LIVE.wx.wind.toFixed(0)} km/h`;
-  toast(`Real conditions${LIVE.name?' at '+LIVE.name:''}: ${LIVE.info}. Weather data by Open-Meteo.com`);
+  toast(`Following ${LIVE.name||'a real beach'}: ${LIVE.info}. B to change. Weather data by Open-Meteo.com`,6000);
   console.log('[live]',LIVE.info,'->',LIVE.locs.map(L=>L.name).join(', '));
 }
