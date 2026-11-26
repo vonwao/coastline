@@ -63,6 +63,11 @@ const LOCATIONS=[
    /* Deep in its valley the lake goes nearly black after the sun is well down, unless the moon is up. */
    todOff:['dusk','starry']},
 ];
+/* Waterfalls are switched off for now (the author, 25 November: "they don't look realistic yet"): no falls, no
+   stream beds cut for them, no waterfall shots. Their settings stay above; ?falls=1 brings them back, for
+   work on them. */
+const FALLS_ON=Q.has('falls');
+if(!FALLS_ON) for(const L of LOCATIONS) if(L.fall){ L.fallOff=L.fall; delete L.fall; }
 /* Pre-rendering: a finer water grid over the same area. */
 if(HQ) for(const L of LOCATIONS){ const G=+(Q.get('grid')||1.5); L.dx/=G; L.nx=Math.round(L.nx*G); L.nz=Math.round(L.nz*G); }
 const FAR_SPAN=17000, FAR_RES=1024;

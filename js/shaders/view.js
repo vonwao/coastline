@@ -57,6 +57,12 @@ float treeCov(float veg,float wood){
 /* Trees in a grove are older and taller at its heart; young trees grow at its edges and out in the
    open. Dense forest is left as it was. */
 float treeAge(float wood){ return uPlantCover>=4?1.:mix(.62,1.08,smoothstep(.12,.75,wood)); }
+/* Grass drifts, 0 to 1: patches a few metres to twenty across. Read sharp (mip 3), the same in the plant
+   and view shaders: the blurred noise used elsewhere here hardly varies at this size. */
+float grassDrift(vec2 wp){
+  float a=textureLod(tNoise,rotT(wp+53.,40.)/40.,3.).g, b=textureLod(tNoise,rotT(wp+9.,11.)/11.,3.).r;
+  return smoothstep(.47,.6,a*.7+b*.3);
+}
 /* How likely a shrub or grass tuft stands here. */
 float shrubCov(vec2 wp,float veg){
   float k=uPlantCover==0?.55:uPlantCover==1?.85:1.;
@@ -70,7 +76,12 @@ float shrubCov(vec2 wp,float veg){
      one shrub apart, too fine to group them.) As many shrubs in all; under closed cover, no change. */
   float cl=smoothstep(.42,.58,textureLod(tNoise,rotT(wp+31.,150.)/150.,4.4).g);
   float open=(1.-smoothstep(.3,.7,zoneVeg(veg)))*.85;
-  return smoothstep(.02,.55,veg)*.7*(1.-.6*smoothstep(.6,.9,veg))*1.75*smoothstep(.36,.66,c)*k*pioneer*mix(1.,2.*cl,open);
+  /* In the open, where the small plants are mostly grass, they grow in drifts a few metres to twenty
+     across, the tufts close enough to run together, with bare ground between (the author, 23 November, on the
+     Alpine lake and Broken coast: tufts standing one by one, evenly spread, "round patches of grass").
+     About as many plants in all. */
+  float drift=mix(1.,2.2*grassDrift(wp),(1.-smoothstep(.25,.6,zoneVeg(veg)))*.9);
+  return smoothstep(.02,.55,veg)*.7*(1.-.6*smoothstep(.6,.9,veg))*1.75*smoothstep(.36,.66,c)*k*pioneer*mix(1.,2.*cl,open)*drift;
 }
 /* The share of grass among the small plants. Grasses and creepers are the first to grow on open sand,
    so near the beach nearly all small plants are grass; shrubs take over further in. Dunes and open
@@ -1501,11 +1512,20 @@ float jointD(vec2 xz,vec2 n,float sp,float stag,float seed,out float str,out flo
   str=(.3+.7*hk.x*hk.x)*mix(seg,1.,step(.82,hk.x));
   return abs(s-k)*sp;
 }
+/* How near the waves this point is, 0 to 1: the share of the ground within about 25 m that the water
+   has wetted lately (the simulation's wet marks, tFx.b, averaged). Beyond the simulated stretch, 1. Rock
+   blackened by spray, or dark and wet, only near the sea: a low rock in the sand of the back beach, under
+   3 m above the sea but far from the waves, showed as a black smudge (Broken coast, 23 November). */
+float seaNear(vec2 xz,float w){ return w>0.?mix(1.,smoothstep(.04,.25,textureLod(tFx,dUV(xz),5.).b),min(w*4.,1.)):1.; }
+float gSeaNear=1.;
 void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
   vec3 w=triW(Ng);
   vec4 big=triN(P,w,23.,fp),mid=triN(P,w,6.1,fp);
   vec3 g=vec3(0.);
-  vec2 rA=triRock(P,w,37.,fp,g,.6),rB=triRock(P,w,8.3,fp,g,.8);
+  /* On steep faces the large stone texture's bumps are soft and round: from 100 m and more they read as
+     smudges of soot, not stone (the author's "painted" rock, section 80). There the blocks below give the relief. */
+  float stp0=1.-smoothstep(.35,.7,Ng.y);
+  vec2 rA=triRock(P,w,37.,fp,g,mix(.6,.18,stp0)),rB=triRock(P,w,8.3,fp,g,mix(.8,.45,stp0));
   /* Close up, a finer layer of the same stone keeps the surface gritty rather than smooth like putty.
      It starts a little further out than it did (.035 m per pixel): low passes saw putty-smooth faces. */
   float fineK=1.-smoothstep(.02,.06,fp);
@@ -1574,7 +1594,15 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
      some boundaries are marked strongly. */
   float bedY=(P.y+dip+wob*.35)/1.9+.55*sin(P.y*.23+.7)+.3*sin(P.y*.71+1.3);
   float bedT=fract(sin(floor(bedY)*12.9898)*43758.5453);
-  float bedL=smoothstep(.80,.97,fract(bedY))*(.5+.5*smoothstep(.3,.6,mid.b))*mix(.25,1.,bedT*bedT);
+  float bF=fract(bedY);
+  float bedL=(1.-smoothstep(.03,.17,bF))*(.5+.5*smoothstep(.3,.6,mid.b))*mix(.25,1.,bedT*bedT);
+  /* Each bed's top edge is rounded back and catches the light from above; its foot is undercut where the
+     softer layer beneath has worn away, and faces down into shadow. So the beds read by light and shade, as
+     ledges, rather than as stripes of colour. */
+  {
+    float bK=steepF*(1.-uGranite)*(1.-smoothstep(.12,.45,fp))*mix(.35,1.,bedT);
+    g+=vec3(0.,1.,0.)*bK*(.85*(1.-smoothstep(0.,.16,bF))-.5*smoothstep(.76,1.,bF));
+  }
   r*=1.-steepF*(.26*bedL-.12*(bedT-.5))*(1.-smoothstep(.15,.6,fp))*(1.-uGranite);
   /* Joints. Rock breaks along a few sets of near-parallel planes: here one set along the beds of the
      coast and one across them. Where a set meets a face it shows as a line, so faces break into
@@ -1588,6 +1616,7 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
     float sA,sB,iA,iB,stA,stB;
     float dA=jointD(P.xz,jA,6.5,0.,1.,stA,sA,iA);
     float dB=jointD(P.xz,jB,3.4,hh(vec2(bedI,3.1)).x,2.,stB,sB,iB);
+    float stA0=stA,stB0=stB;
     stA*=(1.-smoothstep(.7,.95,abs(dot(Ng,nA))))*(1.-.6*uGranite);
     stB*=(1.-smoothstep(.7,.95,abs(dot(Ng,nB))))*(1.-.75*uGranite);
     float aa=max(fp,.004);
@@ -1597,13 +1626,35 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
     r*=1.-.62*max(cA,cB*.85)*jFade;
     /* Each block between joints and beds weathers to its own tone. */
     vec2 bt=hh(vec2(iA*1.73+bedI*.61,iB*2.31+bedI*7.7));
-    r*=mix(1.,.86+.30*bt.x,jFade);
+    r*=mix(1.,mix(.86+.30*bt.x,.76+.44*bt.x,uGranite),jFade);
+    /* Granite seen from above (the Alpine lake's shore, 2 stars: "a flat pale sheet like concrete"): its
+       main cracks are not hairlines but bands a hand to an arm wide holding soil, moss and grass, and they
+       cut the bare rock into sheets. */
+    if(uGranite>0.){
+      float upC=smoothstep(.5,.85,Ng.y)*uGranite*jFade;
+      float wfA=.08+.4*stA0*stA0, wfB=.05+.22*stB0*stB0;
+      float fill=max(stA0*(1.-smoothstep(wfA*.4,wfA+aa,dA)),.8*stB0*(1.-smoothstep(wfB*.4,wfB+aa,dB)));
+      float mos=nz(P.xz,1.7,fp,1);
+      vec3 fillC=mix(vec3(.050,.046,.038),vec3(.075,.095,.035),smoothstep(.4,.65,mos));
+      r=mix(r,fillC,fill*upC*.9);
+    }
     /* Block edges are rounded, curving down into each joint, and each block sits at its own tilt. */
     float nF=1.-smoothstep(.05,.35,fp);
     if(nF>0.){
       float gA=.20+.22*stA,gB=.14+.16*stB;
       g+=(nA*sA*stA*max(1.-dA/gA,0.)*.9+nB*sB*stB*max(1.-dB/gB,0.)*.7)*nF;
       g+=vec3(bt.y-.5,0.,fract(bt.x*7.3)-.5)*.10*nF;
+    }
+    /* Each block is a flat facet of its own, turned a little sideways and up or down from the face as a
+       whole, so the light falls on it at its own angle: a cliff is a mosaic of planes with sharp edges.
+       Without this its shading came only from the land's shape, which on a near-vertical face is the
+       same all the way up, and read as streaks smeared down the cliff. */
+    /* On flatter rock, a shelf or a slab top, the blocks are slabs each tilted a little its own way. */
+    float fK=(1.-smoothstep(.3,.85,fp))*mix(.6,1.,steepF)*(1.-.4*uGranite);
+    if(fK>0.){
+      vec3 Nh=normalize(vec3(Ng.x,0.,Ng.z)+1e-4), Tf=vec3(-Nh.z,0.,Nh.x);
+      vec2 fb=hh(vec2(iA*3.17+bedI*1.91,iB*1.37-bedI*5.3))*2.-1.;
+      g+=mix(vec3(fb.x,0.,fb.y)*.2,Tf*fb.x*.42+vec3(0.,fb.y*.26,0.),steepF)*fK;
     }
   }
   /* Lichen on upward faces above the spray; black and green growth at the water */
@@ -1639,7 +1690,7 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
      The whole band was near black, so a wave-washed rock shelf was one flat dark grey (the author, 23 November,
      Broken coast: "that boring gray"). */
   float bTop=bandH*(1.+.6*mid.r);
-  float splash=(1.-smoothstep(.2,bTop,P.y))*smoothstep(.05,.5,uSwH);
+  float splash=(1.-smoothstep(.2,bTop,P.y))*smoothstep(.05,.5,uSwH)*gSeaNear;
   float bUp=smoothstep(.3*bTop,.6*bTop,P.y);
   r=mix(r,vec3(.030,.031,.030)*(.7+.8*mid.r),splash*bUp*.8);
   float weed=smoothstep(.42,.68,big.g*.6+mid.g*.4);
@@ -2160,7 +2211,7 @@ void main(){
   /* Ripple troughs hold darker grains, so the ripples still read under a cloudy sky. */
   float rpw=1.-smoothstep(.4,1.6,T-uTide);
   alb*=1.+(.03*rp.z/.55-.055*smoothstep(.1,.5,-rp.z/.55))*(.35+.65*rpw);
-  if(m.g>.01) rockSurface(P,N,fp,m.g,alb,Nd);
+  if(m.g>.01){ gSeaNear=seaNear(P.xz,s.w); rockSurface(P,N,fp,m.g,alb,Nd); }
   /* debSh is the shadow on the sand behind the log. On the log itself (debK) its own normal shades it:
      the sand's shadow there drew sticks lying in their own shadow dark, like metal tubes. */
   oB0=vec4(alb,sandness); oB1=vec4(octEnc(Nd),debK,1.-.82*debSh*(1.-debK));
@@ -2177,7 +2228,15 @@ void main(){
     vec3 L=e.rgb; float cov=e.a;
     /* The clouds as the cloud pass drew them for this pixel, rather than from the sky texture, which is far
        coarser than the screen. */
-    if(uCloudPx>0.&&rd.y>0.){ vec4 c=textureLod(tExtra,gl_FragCoord.xy/vec2(uResY*uAspect,uResY),0.); L=c.rgb; cov=c.a; }
+    /* Read through a small blur (four bilinear reads, about three of its texels across): each of its pixels
+       starts its march at its own random point, which the live smoothing averages away over frames, but a
+       single picture or a film frame kept as a pattern of dots along every cloud's edge (the audit of
+       24 November, TECHLOG 78). */
+    if(uCloudPx>0.&&rd.y>0.){
+      vec2 cuv=gl_FragCoord.xy/vec2(uResY*uAspect,uResY), ct=.75/vec2(textureSize(tExtra,0));
+      vec4 c=.25*(textureLod(tExtra,cuv+ct,0.)+textureLod(tExtra,cuv-ct,0.)+textureLod(tExtra,cuv+vec2(ct.x,-ct.y),0.)+textureLod(tExtra,cuv+vec2(-ct.x,ct.y),0.));
+      L=c.rgb; cov=c.a;
+    }
     float mu=dot(rd,uSun);
     if(uMoonLit>0.) L+=uSunE*uMoonK*moonDisc(rd,mu,pa)*(1.-cov);
     else L+=uSunE*smoothstep(.99985,.99996,mu)*(1.-cov)*6.;
@@ -2222,6 +2281,15 @@ void main(){
       alb=mix(alb,vine,min(mc*1.6,.5)*far); sandness*=1.-min(mc*1.6,.6)*far;
     }
   }
+  /* Between the tufts of a grass drift (shrubCov) the ground is a low sward of the same grass, so a drift
+     reads as one patch, not a scatter of separate tufts on bare sand. */
+  if(m.r>.5&&m.g<.5&&m.b>.02){
+    float sw=grassDrift(P.xz)*(1.-smoothstep(.25,.6,zoneVeg(m.b)))*smoothstep(.02,.2,m.b)*smoothstep(.35,.7,grassShare(uFlora,m.b));
+    if(sw>0.){
+      vec3 gc=mix(vec3(.07,.10,.035),vec3(.16,.16,.07),nz(P.xz,2.3,fp,1))*(.75+.5*nz(P.xz,.31,fp,0));
+      alb=mix(alb,gc,sw*.8); sandness*=1.-sw*.85;
+    }
+  }
   float snow=0.;
   if(uSnow>0.&&y>uSnow-500.){
     float sl=y+200.*(nz(P.xz,610.,fp,0)-.5)+60.*(nz(P.xz,97.,fp,1)-.5);
@@ -2258,6 +2326,7 @@ void main(){
      shiny (the author, 23 November: "it gets darker when it's wet!"). It darkened by only a quarter, less than
      wet sand, and only where the water had just been. */
   float wetRock=(1.-smoothstep(.15,.4+1.3*uSwH*(.6+.8*nz(P.xz,9.,fp,1)),y-uTide))*m.g*(1.-sandness);
+  if(wetRock>0.) wetRock*=seaNear(P.xz,w);
   float wet=clamp(max(max(max(fx.b,wetBelt*.72),wetRock*.85),max(fWet*.7,fCov*(1.-fWhite))),0.,1.);
   float wetS=wet*wet;
   vec3 al=alb*mix(1.,mix(.50,.55,m.g),wetS);
@@ -2279,7 +2348,13 @@ void main(){
     ndl=mix(ndl,clamp(dot(Nv,uSun)*.72+.28,0.,1.)*.74,canopyLit);
     cAO*=mix(1.,.71,canopyLit);
   }
-  vec3 E=uSunE*ndl*lit.x*cs*cSh+skyIrr(Nd)*lit.y*cAO;
+  /* On rock, the shade in hollows (lit.y) also takes some of the sun: the sun's baked shadows miss the
+     ledges and gullies of a few metres, and deep in one the sun mostly doesn't reach (TECHLOG 79). */
+  vec3 E=uSunE*ndl*lit.x*cs*cSh*mix(1.,lit.y,.5*m.g)+skyIrr(Nd)*lit.y*cAO;
+  /* Light thrown back by the sunny ground and sea in front: a face turned from the sky takes some of
+     their light and warmth, so the shaded side of a cliff over a beach is not lit by the sky alone
+     (the audit, TECHLOG 78 and 79). The sky light (skyIrr) leaves out the ground below. */
+  E+=(uSunE*max(uSun.y,0.)*vec3(.15,.14,.12)*cs+skyIrr(vec3(0,1,0))*.1)*(.5-.5*Nd.y)*lit.y*cAO;
   /* Driftwood's sides and underside are lit by the sunny sand around it, as the people are. */
   if(debK>0.) E+=debK*vec3(.45,.40,.33)*(uSunE*max(uSun.y,0.)*lit.x*cs*1.4+skyIrr(vec3(0,1,0))*lit.y*.7)*(.5-.5*Nd.y);
   vec3 Lg=al/PI*E;
@@ -2302,6 +2377,7 @@ void main(){
    shows (k), and never needs to read C's picture. */
 const FS_VIEW_W=VIEW_LIB+`
 layout(location=0) out vec4 o;
+`+HAZE+`
 void main(){
   ivec2 px=ivec2(gl_FragCoord.xy);
   vec4 a1=texelFetch(tGA1,px,0);
@@ -2320,10 +2396,27 @@ void main(){
     L=shadeWater(P,rd,t,fp,max(s.dp,s.film),s.film,s.rm1,s.fx,lit,cs,Nw)*wa;
     k=1.-wa;
   }
-  /* Foam */
-  float foam=foamAt(s,wa);
+  /* Foam. On the ground only at the water's edge, within a few tens of centimetres of the water's height:
+     the foam field is a map seen from above, and on a cliff it was drawn straight up the rock, in white
+     stripes a cell wide (the author, 25 November: the "white vertical bars" at Sea cliffs' foot). */
+  /* Where the water is heaped steeply against rock, its foam is laid along the slope, not straight down
+     from above, and the foam field (a cell across) is read blurred: drawn from above, both ran in vertical
+     streaks down the face. */
+  vec3 Pf=P;
+  if(wa>.001&&s.w>0.){
+    float hx=.35;
+    float e0=etaH(P.xz+vec2(hx,0.)),e1=etaH(P.xz-vec2(hx,0.)),e2=etaH(P.xz+vec2(0.,hx)),e3=etaH(P.xz-vec2(0.,hx));
+    vec2 ge=vec2(e0-e1,e2-e3)/(2.*hx);
+    /* (Not at the water's edge, where a dry side reads -100.) */
+    float sl=min(min(e0,e1),min(e2,e3))>-50.?min(length(ge),6.):0.;
+    if(sl>.3){
+      Pf.xz+=ge/sl*(P.y-uTide)*(sqrt(1.+sl*sl)-1.)/sl;
+      s.fx=textureLod(tFx,s.uv,max(log2(max(fp,1e-3)/uDx),0.)+log2(1.+sl));
+    }
+  }
+  float foam=foamAt(s,wa)*mix(1.-smoothstep(.1,.45,P.y-s.eta),1.,wa);
   if(foam>.008){
-    float al; vec3 Lf=foamShade(P,Nw,lit,cs,foam,fp,s.adv.xy,s.adv.zw,al);
+    float al; vec3 Lf=foamShade(Pf,Nw,lit,cs,foam,fp,s.adv.xy,s.adv.zw,al);
     L=mix(L,Lf,al); k*=1.-al;
   }
   /* Spray drifting over the breakers and around the rocks */
@@ -2344,8 +2437,8 @@ void main(){
     L=mix(L,mc*(.9+.6*pow(max(dot(rd,uSun),0.),6.)),tr); k*=1.-tr;
   }
   /* Aerial perspective */
-  float hz=exp(-max(P.y,0.)*.00012);
-  float fg=1.-exp(-t*uFogB*hz);
+  /* Aerial perspective: hazeK (js/shaders/common.js), with a layer of sea haze near the water. */
+  float fg=hazeK(t,uRo.y,P.y,uFogB);
   vec3 rh=rd; rh.y=max(rh.y,.012); rh=normalize(rh);
   vec3 fc=min(env(rh,2.8),vec3(3.2));
   fc=mix(fc,textureLod(tEnv,vec2(.5),7.5).rgb,smoothstep(.06,.34,-rd.y));

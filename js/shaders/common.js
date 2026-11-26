@@ -4,6 +4,18 @@ const HEAD=`#version 300 es
 precision highp float; precision highp int; precision highp sampler2D;
 #define PI 3.14159265359
 `;
+/* Haze between the eye and a point t metres away, the eye at height y0 and the point at y1 above the sea:
+   clear air, thinning slowly with height, and a layer of sea haze (salt and moisture) in the lowest few
+   hundred metres, six tenths as dense again at the sea. Shared by every pass that draws haze. */
+const HAZE=`
+float hazeK(float t,float y0,float y1,float fogB){
+  y0=max(y0,0.); y1=max(y1,0.);
+  const float H=200.;
+  float dy=y1-y0;
+  float m=abs(dy)<2.?exp(-.5*(y0+y1)/H):H*(exp(-y0/H)-exp(-y1/H))/dy;
+  return 1.-exp(-t*fogB*(exp(-y1*.00012)+.6*m));
+}
+`;
 const NOISE=`
 float hash21(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
 vec2 hash22(vec2 p){ vec3 p3=fract(vec3(p.xyx)*vec3(.1031,.1030,.0973)); p3+=dot(p3,p3.yzx+33.33); return fract((p3.xx+p3.yz)*p3.zy); }

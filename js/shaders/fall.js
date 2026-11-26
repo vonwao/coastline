@@ -20,6 +20,7 @@ uniform vec3 uRo,uR,uU,uF,uSun,uSide; uniform float uDir,uLayer;
 `+CLOUD_SHADOW+`
 out vec3 vP,vN; out float vT,vU,vW,vCs,vFog,vSteep; out vec2 vLit; flat out vec3 vFogC;
 vec2 envUV(vec3 d){ return vec2(atan(d.z,d.x)/(2.*PI)+.5,asin(clamp(d.y,-1.,1.))/PI+.5); }
+`+HAZE+`
 void main(){
   float t=aQ.x, u=aQ.y, hw=aQ.z;
   /* N: away from the cliff. The veil is wider and stands out in front of the sheet. */
@@ -39,7 +40,7 @@ void main(){
   vec3 rh=F; rh.y=max(rh.y,.012); rh=normalize(rh);
   vec3 fc=min(textureLod(tEnv,envUV(rh),2.8).rgb,vec3(3.2));
   vFogC=mix(fc,textureLod(tEnv,vec2(.5),7.5).rgb,smoothstep(.06,.34,-F.y));
-  vFog=1.-exp(-length(pos-uRo)*uFogB*exp(-max(pos.y,0.)*.00012));
+  vFog=hazeK(length(pos-uRo),uRo.y,pos.y,uFogB);
   vec3 vv=pos-uRo; float z=dot(vv,uF);
   gl_Position=vec4(dot(vv,uR)/(uTan*uAspect),dot(vv,uU)/uTan,uDA*z+uDB,z); gl_Position.xy-=uJit*gl_Position.w;
 }`;

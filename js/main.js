@@ -117,7 +117,7 @@ window.COAST={ready:false,state,LOCATIONS,LIGHTS,WATER,toggleFav,loadFavs,goBack
   /* A lighting setup for a given sky, for checks: {sunEl, sunAz, moonEl, moonAz, lit, cloud, wind, rain}. */
   sky(D,key='test'){ if(LIGHTS[key]) freeEnv(LIGHTS[key]); LIGHTS[key]=skyLight(Object.assign({sunAz:30,moonEl:-20,moonAz:0,lit:0,cloud:30,wind:10,rain:0},D),D.seed||301); bakeEnv(LIGHTS[key]); return LIGHTS[key].label; },
   show(i,light,kind,opts){ const L=LOCATIONS[i]; const S=makeShot(L,light,kind); if(opts) Object.assign(S,opts); bakeLit(L,S.lightKey); S.t=0; state.cur=S; state.next=null; return {meshes:S.meshes,p0:S.p0,p1:S.p1,kind:S.kind,light:S.lightKey,dur:S.dur}; },
-  advance(i,seconds){ const L=LOCATIONS[i]; const dt=1/60; const n=Math.ceil(seconds/dt); for(let k=0;k<n;k++){ simStep(L,dt); foamStep(L,dt);} rmPass(L); },
+  advance(i,seconds){ const L=LOCATIONS[i]; const dt=1/60; const n=Math.ceil(seconds/dt); for(let k=0;k<n;k++){ simStep(L,dt); foamStep(L,dt); if(L.sp) sprayStep(L,dt); } rmPass(L); },
   bench(n=60){ /* Synchronised timing: every frame is forced to finish on the GPU. */
     const px=new Uint8Array(4); const S=state.cur; const t0=performance.now();
     for(let i=0;i<n;i++){ const dt=1/60; simTime+=dt; stepFFT(simTime); advanceSim(S.L,dt); renderView(S,.5,RT.ldrA.f);

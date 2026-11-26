@@ -124,7 +124,11 @@ void main(){
     float se=0.,sn=0.;
     if(E.x>.02){se+=E.x+E.w;sn++;} if(W.x>.02){se+=W.x+W.w;sn++;}
     if(N.x>.02){se+=N.x+N.w;sn++;} if(S.x>.02){se+=S.x+S.w;sn++;}
-    if(uRockEta>.5) eOut=sn>0.?min(se/sn,C.w):C.w-1.;
+    /* Rock with no water beside it takes a level well below the sea, not a metre under its own top: on a
+       cliff that was 30 m up, and the drawn water, blended from the waterline up to it across one cell,
+       stood out of the rock face wherever the drawn face (finer than the solver's) is set back: sheets of
+       foam a cell wide up the foot of the cliff (the author, 25 November: the "white vertical bars"). */
+    if(uRockEta>.5) eOut=sn>0.?min(se/sn,C.w):min(C.w-1.,uTide-2.);
     else if(sn>0.&&C.w-se/sn>.35) eOut=se/sn;
   }
   o0=vec4(eOut,C.x,.5*(C.y+W.y),.5*(C.z+S.z));
@@ -164,6 +168,13 @@ void main(){
   /* Water slamming into rock. */
   vec2 gb=vec2(E.w-W.w,N.w-S.w)/(2.*uDx);
   float impact=smoothstep(.25,1.9,dot(vel,gb)*(1.+.8*sp))*smoothstep(.01,.12,h)*smoothstep(.22,.75,length(gb));
+  /* And water rising fast at the foot of a wall, as a wave arrives there (the jets in FS_SPRAY_STEP): it
+     falls back churned white. */
+  {
+    float st=length(gb); vec2 dW=gb/max(st,1e-3);
+    float shore=step(e+.15,F(c+ivec2(round(dW*2.))).w);
+    impact=max(impact,smoothstep(.6,2.5,max(-h*div,dot(vel,dW)*smoothstep(.04,.3,h)))*smoothstep(.3,.9,st)*shore);
+  }
   float impB=smoothstep(.40,.66,fineN+(patchN-.5)*.5);
   float gen=(brk*3.0+swash*1.9+impact*1.25*impB*(1.-smoothstep(uBreakD*1.5,uBreakD*4.,h)*.55))*(.55+.9*patchN)*uFoamGen;
   /* Where a waterfall lands (fallMeasure in js/world.js) the sea is churned white, and the foam drifts off

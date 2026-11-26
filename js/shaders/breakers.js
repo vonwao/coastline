@@ -124,6 +124,7 @@ vec2 bezD(vec2 a,vec2 b,vec2 c,vec2 d,float t){ float s=1.-t; return 3.*s*s*(b-a
 /* Clumps of tumbling white water: big and small, rolling forward and down the face. s runs along the
    crest in metres, a down the curl. */
 float lumpAt(float s,float a){ return (textureLod(tLace,vec2(s*.045,a*.045-uTime*.05),0.).b-.5)*2.; }
+`+HAZE+`
 void main(){
   vP=vec3(0.); vN=vec3(0.,1.,0.); vT=vec3(1.,0.,0.); vA=0.; vV=0.; vS=0.; vHs=0.; vStage=0.; vK=0.; vCap=0.; vCs=1.; vFog=0.; vLit=vec2(1.); vFogC=vec3(0.); vLump=0.;
   ivec2 rk=ivec2(gl_InstanceID%uK,uRow0+gl_InstanceID/uK);
@@ -197,7 +198,7 @@ void main(){
   vec3 rh=F; rh.y=max(rh.y,.012); rh=normalize(rh);
   vec3 fc=min(textureLod(tEnv,envUV(rh),2.8).rgb,vec3(3.2));
   vFogC=mix(fc,textureLod(tEnv,vec2(.5),7.5).rgb,smoothstep(.06,.34,-F.y));
-  vFog=1.-exp(-length(pos-uRo)*uFogB*exp(-max(pos.y,0.)*.00012));
+  vFog=hazeK(length(pos-uRo),uRo.y,pos.y,uFogB);
   vec3 vv=pos-uRo; float z=dot(vv,uF);
   gl_Position=vec4(dot(vv,uR)/(uTan*uAspect),dot(vv,uU)/uTan,uDA*z+uDB,z); gl_Position.xy-=uJit*gl_Position.w;
 }`;

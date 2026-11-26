@@ -43,7 +43,37 @@ void main(){
       /* Chances are per 1/60 s, so smaller time steps don't throw up more spray. */
       float kDt=min(uDt*60.,1.);
       float pHit=smoothstep(.15,1.5,hit)*kDt, pCrest=crest*.035*kDt;
-      if(q.x<pHit||q.y<pCrest){
+      /* A wave arriving at a wall (the author's rated Sea cliffs, audit section 78: "the sea meets the cliffs in a
+         clean line"). The water at the foot of a wall can't flow on, so it rises: measured at Sea cliffs, at
+         2 m a second or more in one wall cell in ten, 8 m a second in one in a hundred. The trigger above
+         (the flow's speed into the rock) is small right at a wall, and its spray rose only a metre or two.
+         Here a fast rise starts a jet. */
+      float rise=-C.x*div;
+      /* Only where the rock stands above the water two cells on: a steep slope under the sea rises with
+         every swell too. At Sea cliffs the sea mostly meets a sloping apron of rock at the foot of the wall,
+         not the wall itself, so slopes from about 20 degrees count, and the water running up them (its speed
+         into the rock) as well as its rise. */
+      vec2 dW=gb/max(steep,1e-3);
+      float shore=step(e+.15,F(c+ivec2(round(dW*2.))).w);
+      float push=max(rise,dot(vel,dW)*smoothstep(.04,.3,C.x));
+      /* A high-quality film has four times the slots: there twice as many jets as live (sqrt(uPerK)). */
+      float pWall=smoothstep(.25,1.6,push)*smoothstep(.3,.9,steep)*shore*kDt*2.*sqrt(uPerK);
+      vec3 qw=h3(q2*57.+vec3(vec2(i)*.13,1.));
+      if(qw.x<pWall){
+        vec2 away=-gb/steep;
+        /* The jet's speed: from the rise, and from the waves' size (their speed in shallow water, sqrt(gH)):
+           a 2.5 m sea throws most jets 2 to 6 m up the wall, a few 10 to 15 m. */
+        float up=min((push*1.2+sqrt(9.81*max(uBreakD/1.35,.2)))*(.75+1.7*qw.y*qw.y)*mix(.55,1.,smoothstep(.7,1.6,steep)),17.);
+        vec2 side=(q2.zx-.5)*2.4;
+        float off=.6+1.6*q2.z;
+        V.xyz=vec3(away.x*off+side.x+vel.x*.15,up,away.y*off+side.y+vel.y*.15);
+        /* Drops, and a few puffs of mist (one in twelve) that hang low at the foot as a thin haze. Soft white
+           plumes as well, a mass of spray drawn as one, read as puffs of fog or cloud (the author, 25 November,
+           choosing between films of three kinds: renders/compare-1125/, tech log 82). */
+        if(qw.z<.08){ V.w=mix(1.,2.2,q.z); V.xyz*=.5; P.w=1.6+1.6*q2.x; }
+        else { V.w=mix(.03,.1,q.z*q.z); P.w=3.; }
+        P.xyz=vec3(uDomMin.x+(float(c.x)+r.z)*uDx,e+.1,uDomMin.y+(float(c.y)+q.y)*uDx);
+      } else if(q.x<pHit||q.y<pCrest){
         bool big=q.x<pHit;
         bool mist=big&&q2.y<.13;
         vec2 away=steep>.01?-gb/steep:vec2(0.);

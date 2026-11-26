@@ -198,6 +198,7 @@ out vec2 vUV; flat out vec3 vTint,vSky,vFogC,vBack; flat out vec4 vW; flat out f
 vec2 envUV(vec3 d){ return vec2(atan(d.z,d.x)/(2.*PI)+.5,asin(clamp(d.y,-1.,1.))/PI+.5); }
 const float E[5]=float[5](6.,18.,32.,50.,84.);
 void cull(){ gl_Position=vec4(2.,2.,2.,1.); vUV=vec2(0.); }
+`+HAZE+`
 void main(){
   ivec2 idx=uOrigin+ivec2(gl_InstanceID%uGrid,gl_InstanceID/uGrid);
   vec2 ip=vec2(idx),wp=plantPos(ip);
@@ -266,7 +267,7 @@ void main(){
   vec3 rh=F; rh.y=max(rh.y,.012); rh=normalize(rh);
   vec3 fc=min(textureLod(tEnv,envUV(rh),2.8).rgb,vec3(3.2));
   vFogC=mix(fc,textureLod(tEnv,vec2(.5),7.5).rgb,smoothstep(.06,.34,-F.y));
-  vFog=1.-exp(-length(pos-uRo)*uFogB*exp(-max(pos.y,0.)*.00012));
+  vFog=hazeK(length(pos-uRo),uRo.y,pos.y,uFogB);
   vBack=vec3(1.,1.3,.42)*uSunE*max(uSun.y,.14)*pow(max(dot(F,uSun)*.5+.5,0.),4.)*1.5;
 }`;
 const FS_CARDS=HEAD+PLANT_SHADE+`

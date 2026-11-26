@@ -122,6 +122,7 @@ float legAngle(float ph,float sA,out float knee){
   if(ph<.6){ float s=ph/.6; knee=.12*sin(PI*s); return asin(sA*(1.-2.*s)); }
   float s=(ph-.6)/.4, e=.5-.5*cos(PI*s); knee=1.05*sin(PI*min(s*1.25,1.)); return asin(sA*(2.*e-1.));
 }
+`+HAZE+`
 void main(){
   bool top=iB.w>5.; float sc=top?iB.w-10.:iB.w;
   int kind=int(iC.w+.5), id=int(aM/16.+.01); float mat=aM-16.*float(id);
@@ -172,7 +173,7 @@ void main(){
   vSky=textureLod(tEnv,envUV(normalize(vec3(0.,1.6,0.))),6.2).rgb*PI*.68;
   vec3 F=normalize(v), rh=F; rh.y=max(rh.y,.012); rh=normalize(rh);
   vFogC=mix(min(textureLod(tEnv,envUV(rh),2.8).rgb,vec3(3.2)),textureLod(tEnv,vec2(.5),7.5).rgb,smoothstep(.06,.34,-F.y));
-  vFog=1.-exp(-length(v)*uFogB*exp(-max(pos.y,0.)*.00012));
+  vFog=hazeK(length(v),uRo.y,pos.y,uFogB);
 }`;
 const FS_PEOPLE=HEAD+`
 in vec3 vN,vW,vV,vSky,vFogC; in float vM,vFog,vLit; flat in vec4 vB; layout(location=0) out vec4 o;

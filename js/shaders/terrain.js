@@ -222,8 +222,14 @@ vec4 rockyRaw(vec2 p){
   float h,veg=0.,sand=0.;
   if(d>=0.){
     float Pw=(form==0?20.:form==1?62.:165.)*(.55+.9*fbm(q/190.,3));
+    /* High cliffs: along about half the coast the bench is gone and the wall drops straight into water a few
+       metres deep, so the waves reach it unbroken and burst up it (FS_SPRAY_STEP). With a bench all along,
+       every wave broke on it 20 to 40 m out and only spent white water reached the wall: "the sea meets the
+       cliffs in a clean line" (audit, tech log 78). */
+    float plg=form==0?smoothstep(.44,.6,fbm(vec2(q.y/300.,uSeed+4.1),3)):0.;
+    Pw*=1.-.85*plg;
     float pk=smoothstep(0.,Pw,d);
-    float plat=mix(form==0?.55:.25,form==0?-1.25:-1.6,pk)+ledge-chan*(1.2+2.4*pk);
+    float plat=mix(form==0?mix(.55,-2.2,plg):.25,form==0?-1.25-1.4*plg:-1.6,pk)+ledge*(1.-.7*plg)-chan*(1.2+2.4*pk);
     float off=smoothstep(Pw*.82,Pw*1.1+26.,d);
     float past=max(d-Pw*.82,0.);
     h=mix(plat,-min(2.4+.20*past+.9*sqrt(past),32.),off);
@@ -584,7 +590,9 @@ void main(){
   float sl=length(vec2(dFdx(a.x),dFdy(a.x)))/uTexel;
   a.y=max(smoothstep(.34,.72,sl),a.x<3.2?1.:0.);
   a.y=max(a.y,(1.-a.z)*smoothstep(0.,.1,a.x));
-  a.w*=1.-smoothstep(.5,.85,sl)*smoothstep(.2,1.,a.x);
+  /* Sand lies on slopes up to about 35 degrees (a dune's lee), so only steeper ground shows rock: from .5
+     the steep side of a sand mound on Broken coast showed its rock through, as a dark smudge. */
+  a.w*=1.-smoothstep(.72,1.,sl)*smoothstep(.2,1.,a.x);
   a.y*=1.-a.w;
   o=a;
 }`;
@@ -616,6 +624,22 @@ void main(){
   ao-=clamp((l1-t0.r)/(px*7.),0.,1.)*.30;
   ao-=clamp((l2-t0.r)/(px*28.),0.,1.)*.22;
   ao-=clamp((l3-t0.r)/(px*80.),0.,1.)*.16;
+  /* Shade in hollows: in eight directions, how far the ground within about 10 m rises above this point's
+     own slope (above the horizontal only: below it is ground in the sky light anyway). A gully in a
+     cliff, the foot of a wall, a crack between boulders take less of the sky. The terms above, from the
+     map's blurred heights, barely changed across a cliff: its gullies were lit as its open faces (the
+     audit, TECHLOG 78: "lit evenly from top to bottom"). */
+  vec2 tx=1./vec2(textureSize(tT,0));
+  vec2 g=vec2(textureLod(tT,vUV+vec2(tx.x,0.),0.).r-textureLod(tT,vUV-vec2(tx.x,0.),0.).r,textureLod(tT,vUV+vec2(0.,tx.y),0.).r-textureLod(tT,vUV-vec2(0.,tx.y),0.).r)/(2.*px);
+  float occ=0.;
+  for(int i=0;i<8;i++){
+    float a=float(i)*.7853982+.3927; vec2 d=vec2(cos(a),sin(a));
+    float hor=0.;
+    for(int j=1;j<=5;j++){ float r=float(j*j+1); hor=max(hor,(textureLod(tT,vUV+d*r*tx,0.).r-t0.r)/(r*px)); }
+    float tg=max(dot(g,d),0.);
+    occ+=max(hor/sqrt(1.+hor*hor)-tg/sqrt(1.+tg*tg),0.);
+  }
+  ao*=1.-clamp(occ/8.*1.3,0.,.75);
   o=vec4(sh,clamp(ao,0.,1.),0.,1.);
 }`;
 
