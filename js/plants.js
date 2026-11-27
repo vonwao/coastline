@@ -457,20 +457,28 @@ function makeMat(seed,R0,bright,hue,o={}){
     }
     return B.finish();
   }
-  /* Runners from the middle, each forking once or twice, with a leaf on a short stalk at every node,
-     alternately to each side, held up a hand's breadth off the sand. */
+  /* Runners from the middle, each forking now and then, with a leaf on a stalk at every node, alternately
+     to each side. The runners reach out mostly one way, as the plant spreads over open sand (with the
+     wind, down the dune), some much further than others, and fork more; the leaves stand tilted up off the
+     sand, each its own way. Spread evenly all round, of one length, with flat leaves, every plant was the
+     same star lying on the sand, and from the middle distance they read as dark stickers (the audit, tech
+     log 78, item 10). */
   const runner=(p0,a,L,depth)=>{
     const st=.07, m=Math.max(3,Math.round(L/st)); let p=p0; const pts=[p];
     for(let k=1;k<=m;k++){
-      a+=(r()-.5)*.3; p=v3.add(p,[Math.cos(a)*st,0,Math.sin(a)*st]); p=[p[0],.015+.012*r(),p[2]]; pts.push(p);
-      const sd=k%2?1:-1, c=v3.add(p,[-Math.sin(a)*sd*.06,.05+.06*r(),Math.cos(a)*sd*.06]);
-      B.leaf(c,v3.norm([(r()-.5)*.6,1,(r()-.5)*.6]),(o.leafSize??.055)*(.8+.4*r()),o.aspect??.9,bright+.15*(r()-.5),hue+.1*(r()-.5),r);
-      if(depth>0&&r()<.09) runner(p,a+(r()<.5?1:-1)*(.5+.6*r()),L*(.35+.35*r()),depth-1);
+      a+=(r()-.5)*.34; p=v3.add(p,[Math.cos(a)*st,0,Math.sin(a)*st]); p=[p[0],.015+.012*r(),p[2]]; pts.push(p);
+      const sd=k%2?1:-1, c=v3.add(p,[-Math.sin(a)*sd*.06,.05+.08*r(),Math.cos(a)*sd*.06]);
+      const ta=r()*6.28318, tilt=.55+1.3*r();
+      B.leaf(c,v3.norm([Math.cos(ta)*tilt,1,Math.sin(ta)*tilt]),(o.leafSize??.055)*(.75+.5*r()),o.aspect??.9,bright+.18*(r()-.5),hue+.12*(r()-.5),r);
+      if(depth>0&&r()<.16) runner(p,a+(r()<.5?1:-1)*(.45+.6*r()),L*(.3+.45*r()),depth-1);
     }
     B.stem(pts,pts.map(()=>.008),.4,.3);
   };
-  const n=8+Math.floor(r()*4);
-  for(let s=0;s<n;s++) runner([0,.02,0],s/n*6.28318+(r()-.5)*.6,R0*(.55+.45*r()),2);
+  const n=6+Math.floor(r()*4), a0=r()*6.28318;
+  for(let s=0;s<n;s++){
+    const back=s===0;
+    runner([0,.02,0],back?a0+Math.PI+(r()-.5)*.8:a0+(s/(n-1)-.5)*3.4+(r()-.5)*.5,R0*(back?.3+.25*r():.35+.75*Math.pow(r(),.6)),2);
+  }
   return B.finish();
 }
 /* Wind-sculpted cypress, as the Monterey cypress: a short leaning trunk, a few heavy limbs reaching out

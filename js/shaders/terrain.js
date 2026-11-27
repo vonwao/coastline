@@ -292,6 +292,10 @@ vec4 rockyRaw(vec2 p){
     float bump=-6.5+(peak+6.5)*pow(1.-max(rd,0.)*max(rd,0.),.42)+ledge*.6;
     bump=min(bump,peak*(.62+.3*jt.x)+.4*ledge);
     bump=mix(-8.,bump,zoneK);
+    /* The rock's foot slopes down to the seabed around it. It stopped at a fixed depth, so where the bed is
+       deeper it ended in a step round its edge, whose shadow outlined every rock under water in a dark
+       line (seen from above; the audit, tech log 78, item 9). */
+    bump=mix(bump,min(bump,h-.3),smoothstep(.45,1.,rd)*(1.-smoothstep(-2.5,-1.,bump)));
     if(bump>h){ h=bump; sand=0.; }
   }
   /* Rock is broken into big blocks, then cut into dipping ledges by its beds, then given fine relief.
@@ -351,6 +355,39 @@ float fallZ(float x){ float dx=x-uFall.z; return uFall.x+5.*sin(dx*.05)*smoothst
 float fa(vec2 p){ return textureLod(tNoise,p/4.,0.).r; }
 float ra(vec2 p){ float b=textureLod(tNoise,p/6.,0.).b; return b*b; }
 float bn(vec2 p){ return fa(p); }
+/* The Alpine lake's mountains before erosion: a range of ridges two kilometres high, rising with the
+   distance u from the shore. */
+float mtnM(vec2 qm,float u){
+  return smoothstep(120.,2600.,u)*(700.+1500.*ra(qm/1900.))*(.55+.6*fa(qm/800.))
+    +smoothstep(300.,1800.,u)*240.*ra(qm/430.)+smoothstep(200.,1500.,u)*60.*ra(qm/120.);
+}
+/* Gullies down the fall line (after the "eroded terrain" noise of Clay John and Rune Skovbo Johansen):
+   in each cell of a grid, waves running across the slope, so their troughs run straight down it; blended
+   over the neighbouring cells, they wander and fork. Several sizes, each finer one turned by the slope of
+   the ones before, so small gullies feed into bigger ones. Returns the height in m. */
+vec3 eroCell(vec2 p,vec2 dir){
+  vec2 ip=floor(p),fp=fract(p); vec3 va=vec3(0.); float wt=0.;
+  for(int i=-2;i<=1;i++) for(int j=-2;j<=1;j++){
+    vec2 o=vec2(i,j), pp=fp+o-hash22(ip-o)*.5;
+    float w=exp(-dot(pp,pp)*2.); wt+=w;
+    float mg=dot(pp,dir)*6.2832;
+    va+=vec3(cos(mg),-sin(mg)*dir)*w;
+  }
+  return va/wt;
+}
+float erodeH(vec2 p,vec2 g){
+  vec2 n=normalize(vec2(g.y,-g.x)+1e-6);
+  vec3 acc=vec3(0.); float a=1.,f=1./340.;
+  /* Three sizes, 340, 170 and 85 m: a finer one is under five points of the far map (16 m each) and came
+     out as crumpled spikes. */
+  for(int o=0;o<3;o++){
+    vec3 e=eroCell(p*f,n*1.4+vec2(acc.z,-acc.y)*1.2);
+    acc+=e*a*vec3(1.,1.,1.);
+    a*=.45; f*=2.;
+  }
+  /* Gullies cut in more than the ridges between them stand out. */
+  return (acc.x-.35)*55.;
+}
 `+BEACH_PROF+TERRAIN_ROCK+`
 /* Granite boulders, rounded by weathering, on a jittered grid. Each is a squat ellipsoid standing on
    the ground beneath it; where boulders overlap the higher one wins, leaving crevices between them.
@@ -475,12 +512,19 @@ vec4 mixedCoast(vec2 p){
     } else {
       float u=d<0.?-d:dFar;
       vec2 qm=q+(d<0.?0.:3100.);
-      float ridge=ra(qm/1900.),hump=fa(qm/800.);
-      h=1.4*(1.-exp(-u/10.))
-        +smoothstep(0.,260.,u)*(25.+70.*fa(qm/180.))
-        +smoothstep(120.,2600.,u)*(700.+1500.*ridge)*(.55+.6*hump)
-        +smoothstep(300.,1800.,u)*240.*ra(qm/430.)
-        +smoothstep(200.,1500.,u)*60.*ra(qm/120.);
+      h=1.4*(1.-exp(-u/10.))+smoothstep(0.,260.,u)*(25.+70.*fa(qm/180.))+mtnM(qm,u);
+      /* Cut by gullies and couloirs down the fall line, with ribs between: smooth, the peaks rose as single
+         cones with even slopes ("mountains & snow don't look natural", 18 November; 2 stars each time; the
+         audit, tech log 78, item 5). Only on the steep mountainsides, not the forested foot. u grows away
+         from the shore on either side, by one metre for each metre across. */
+      float mE=smoothstep(200.,800.,u);
+      if(mE>0.){
+        float s=d<0.?-1.:1., E=20.;
+        vec2 gr=vec2(mtnM(qm+vec2(E,0.),u+s*E)-mtnM(qm-vec2(E,0.),u-s*E),mtnM(qm+vec2(0.,E),u)-mtnM(qm-vec2(0.,E),u))/(2.*E);
+        /* Mostly on the high rock: on the lower slopes they read as regular ripples, and the forest covers
+           them there. Stronger in some places than others. */
+        h+=mE*erodeH(qm,gr)*smoothstep(.1,.45,length(gr))*smoothstep(150.,650.,h)*(.45+.8*fa(qm/650.));
+      }
       /* Forest from just above the shore to the treeline, which wanders with the slope's exposure. */
       veg=smoothstep(8.,40.,u+eS)*(.6+.8*fa(q/31.))*(1.-smoothstep(380.,620.,h+140.*(fa(qm/300.)-.5)));
     }
@@ -514,6 +558,8 @@ vec4 mixedCoast(vec2 p){
        23 November). */
     if(uForm==6){ float pk=mix(-1.,4.5,kk*kk); bump=-5.+(pk+5.)*pow(1.-max(rd,0.)*max(rd,0.),1.3); }
     bump=mix(-8.,bump,zoneK);
+    /* Its foot slopes down to the bed around it, as in rockyRaw(): no step and dark outline. */
+    bump=mix(bump,min(bump,h-.3),smoothstep(.45,1.,rd)*(1.-smoothstep(-2.5,-1.,bump)));
     if(bump>h){ h=bump; sand=0.; }
   }
   if(uForm==5){

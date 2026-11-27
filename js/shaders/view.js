@@ -1450,7 +1450,10 @@ vec3 groundAlb(vec2 p,float y,vec4 m,float fp,out float rough){
     r=mix(r,r3,smoothstep(.50,.80,nz(p,5.3,fp,2))*.34);
     r*=.70+.34*n3+.26*n2;
     r=mix(r,vec3(.40,.37,.20),smoothstep(.60,.76,nz(p,13.,fp,0))*smoothstep(3.,12.,y)*.42);
-    float tide=(1.-smoothstep(.4,3.0+1.8*n2,y))*smoothstep(-3.5,-.5,y);
+    /* The dark band at the water's edge: as high as the waves throw spray (uSwH, as in rockSurface), and
+       none on a lake. It reached 3.5 m down, so every rock under shallow water had a near-black skirt,
+       which outlined it seen from above (the audit, tech log 78, item 9). */
+    float tide=(1.-smoothstep(.2,(.4+1.5*uSwH)*(1.+.6*n2),y))*smoothstep(-1.5,-.3,y)*smoothstep(.05,.5,uSwH);
     r=mix(r,vec3(.034,.040,.034),tide*.9);
     if(y<-.5) r=mix(r,vec3(.10,.115,.085),smoothstep(-.5,-3.,y));
     c=mix(c,r,rock);
@@ -1649,6 +1652,19 @@ void rockSurface(vec3 P,vec3 Ng,float fp,float k,inout vec3 alb,inout vec3 Nd){
        whole, so the light falls on it at its own angle: a cliff is a mosaic of planes with sharp edges.
        Without this its shading came only from the land's shape, which on a near-vertical face is the
        same all the way up, and read as streaks smeared down the cliff. */
+    /* On flat rock the edges of the thin beds crop out as low steps, all facing the same way across the
+       shelf, each a gentle back rising to a short drop in shadow: a wave-cut shelf is ribbed like that,
+       not smooth (Broken coast, the audit's item 4). Only some edges make a step. */
+    {
+      float fl=smoothstep(.6,.88,Ng.y)*(1.-uGranite)*(1.-smoothstep(.12,.5,fp));
+      if(fl>0.){
+        float sB=dot(P.xz,jA)/1.4+1.2*(textureLod(tNoise,P.xz/23.+.4,0.).r-.5);
+        float fB=fract(sB), on=step(.4,hh(vec2(floor(sB),7.3)).x);
+        float drop=smoothstep(.8,.96,fB);
+        g+=vec3(jA.x,0.,jA.y)*fl*on*(.14-1.1*drop);
+        r*=1.-.22*fl*on*drop;
+      }
+    }
     /* On flatter rock, a shelf or a slab top, the blocks are slabs each tilted a little its own way. */
     float fK=(1.-smoothstep(.3,.85,fp))*mix(.6,1.,steepF)*(1.-.4*uGranite);
     if(fK>0.){
@@ -2327,9 +2343,23 @@ void main(){
      wet sand, and only where the water had just been. */
   float wetRock=(1.-smoothstep(.15,.4+1.3*uSwH*(.6+.8*nz(P.xz,9.,fp,1)),y-uTide))*m.g*(1.-sandness);
   if(wetRock>0.) wetRock*=seaNear(P.xz,w);
-  float wet=clamp(max(max(max(fx.b,wetBelt*.72),wetRock*.85),max(fWet*.7,fCov*(1.-fWhite))),0.,1.);
+  /* Rock pools: water left standing in the hollows of a flat shelf of rock that the waves wash over, from
+     the waterline to about as high as they run. Dark, with the rock showing through, and a mirror for the
+     sky. Without them a wave-cut shelf (Broken coast, the audit's item 4) read as a smooth lump. */
+  float pool=0.;
+  if(m.g>.3&&uSwH>.1&&w>0.){
+    float hk=smoothstep(-.3,.1,y-uTide)*(1.-smoothstep(.5+.7*uSwH,1.+1.3*uSwH,y-uTide))*smoothstep(.9,.97,N.y);
+    if(hk>0.){
+      float pn=nz(P.xz,5.3,fp,2)*.55+nz(P.xz,1.7,fp,1)*.3+nz(P.xz,.6,fp,3)*.15;
+      /* Only in a hollow: lower than the rock round it, 2.5 m each way. */
+      float av=.25*(terrH(P.xz+vec2(2.5,0.))+terrH(P.xz-vec2(2.5,0.))+terrH(P.xz+vec2(0.,2.5))+terrH(P.xz-vec2(0.,2.5)));
+      pool=smoothstep(.64,.68,pn+.5*smoothstep(.02,.25,av-y)-.25)*smoothstep(.0,.08,av-y)*hk*smoothstep(.3,.6,m.g)*seaNear(P.xz,w);
+    }
+  }
+  float wet=clamp(max(max(max(fx.b,wetBelt*.72),max(wetRock*.85,pool)),max(fWet*.7,fCov*(1.-fWhite))),0.,1.);
   float wetS=wet*wet;
   vec3 al=alb*mix(1.,mix(.50,.55,m.g),wetS);
+  al=mix(al,al*.6+vec3(.004,.008,.009),pool);
   /* Debris at the top of the swash line. */
   /* It's a fine line, so it fades out with distance: seen from the air, a thin dark line along the
      highest run-up read as a crack in the sand. */
@@ -2360,11 +2390,11 @@ void main(){
   vec3 Lg=al/PI*E;
   Lg+=al*vec3(.9,1.15,.42)/PI*uSunE*max(uSun.y,.12)*cTr*lit.x*cs*cSh+canopyGlow;
   /* Wet sand and wet rock are glossy, mirroring sky and sun. */
-  vec3 Ng=normalize(mix(Nd,N+vec3(0,2.,0),wetS*.82));
+  vec3 Ng=normalize(mix(mix(Nd,N+vec3(0,2.,0),wetS*.82),vec3(0,1,0),pool));
   float nvg=max(dot(Ng,-rd),.02);
   float Fg=.025+.975*pow(1.-nvg,5.);
   vec3 Rg=reflect(rd,Ng); Rg.y=abs(Rg.y)+.01;
-  float gloss=wetS*(sandness*.9+.5*m.g)*smoothstep(.72,1.,wet);
+  float gloss=max(wetS*(sandness*.9+.5*m.g)*smoothstep(.72,1.,wet),pool*1.4);
   Lg+=env(normalize(Rg),3.2)*Fg*gloss*lit.y*(1.4);
   vec3 Hg=normalize(uSun-rd);
   float nh=max(dot(Ng,Hg),0.);

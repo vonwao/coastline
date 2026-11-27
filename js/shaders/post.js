@@ -1,5 +1,11 @@
 'use strict';
 /* ------ Post ------ */
+/* The camera's character (the audit, tech log 78, item 8): film grain, darker corners, a glow round
+   bright light, colour fringes towards the edges, and a little less sharpening. the author chose the subtle
+   look, 1, from sample films of all three (27 November; tech log 85), so it is the default. ?camfx=0 is
+   the clean picture as before, ?camfx=2 the stronger look. Set once on each program that has uCamFx
+   (finalizeProgram in js/gl.js). */
+const CAM_FX=Math.min(Math.max((typeof Q!=='undefined'&&Q.has('camfx'))?+Q.get('camfx')||0:1,0),2);
 const FS_BDOWN=HEAD+`in vec2 vUV; out vec4 o; uniform sampler2D tI; uniform vec2 uTx; uniform float uThr;
 void main(){ vec3 c=vec3(0.);
   for(int i=0;i<4;i++){ vec2 s=vec2(i&1,(i>>1)&1)*2.-1.; c+=textureLod(tI,vUV+s*uTx,0.).rgb; } c*=.25;
@@ -8,7 +14,7 @@ void main(){ vec3 c=vec3(0.);
 const FS_BUP=HEAD+`in vec2 vUV; out vec4 o; uniform sampler2D tI; uniform vec2 uTx;
 void main(){ vec3 c=vec3(0.);
   for(int i=0;i<4;i++){ vec2 s=vec2(i&1,(i>>1)&1)*2.-1.; c+=textureLod(tI,vUV+s*uTx,0.).rgb; } o=vec4(c*.25,1.); }`;
-const FS_TONE=HEAD+`in vec2 vUV; out vec4 o; uniform sampler2D tI,tB; uniform float uExp,uBloom,uSat,uNight; uniform vec3 uTint;
+const FS_TONE=HEAD+`in vec2 vUV; out vec4 o; uniform sampler2D tI,tB; uniform float uExp,uBloom,uSat,uNight,uCamFx; uniform vec3 uTint;
 vec3 aces(vec3 v){
   const mat3 A=mat3(.59719,.07600,.02840,.35458,.90834,.13383,.04823,.01566,.83777);
   const mat3 B=mat3(1.60475,-.10208,-.00327,-.53108,1.10813,-.07276,-.07367,-.00605,1.07602);
@@ -16,7 +22,8 @@ vec3 aces(vec3 v){
 }
 void main(){
   vec3 c=textureLod(tI,vUV,0.).rgb; vec3 b=textureLod(tB,vUV,0.).rgb;
-  c=c+b*uBloom; c*=uExp*uTint;
+  /* A lens spreads very bright light into a glow round it, a little warm (halation): more with uCamFx. */
+  c=c+b*uBloom*(1.+1.1*uCamFx)*mix(vec3(1.),vec3(1.12,1.,.88),.5*min(uCamFx,1.)); c*=uExp*uTint;
   /* Night: in dim light the eye loses colour and sees what's left as bluish (the Purkinje shift). The
      brightest things, like the moon and its path on the water, keep a little more of their own colour. */
   if(uNight>0.){
@@ -26,6 +33,8 @@ void main(){
   c=aces(c*1.08);
   float l=dot(c,vec3(.2126,.7152,.0722)); c=max(mix(vec3(l),c,uSat),0.);
   c=pow(c,vec3(1./2.2));
+  /* The strong look lifts the blacks a little, as film and most camera profiles do. */
+  c=c*(1.-.035*max(uCamFx-1.,0.))+.025*max(uCamFx-1.,0.);
   o=vec4(c,dot(c,vec3(.299,.587,.114)));
 }`;
 const FS_MIX=HEAD+`in vec2 vUV; out vec4 o; uniform sampler2D tA,tB; uniform float uK; void main(){ o=mix(texture(tA,vUV),texture(tB,vUV),uK); }`;
@@ -77,7 +86,7 @@ void main(){
   }
   o=vec4(cur,dot(cur,vec3(.299,.587,.114)));
 }`;
-const FS_FINAL=HEAD+`in vec2 vUV; out vec4 o; uniform sampler2D tI; uniform vec2 uTx,uOut; uniform float uTime,uSharp,uNoFxaa;
+const FS_FINAL=HEAD+`in vec2 vUV; out vec4 o; uniform sampler2D tI; uniform vec2 uTx,uOut; uniform float uTime,uSharp,uNoFxaa,uCamFx;
 float hash(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
 /* The picture stretched to the screen with a Catmull-Rom filter (five reads, as the smoothing's history in
    FS_TAA): sharper than straight-line blending, which softens every edge across the stretch. */
@@ -118,9 +127,24 @@ void main(){
     float amp=sqrt(clamp(min(dot(mn,vec3(.33)),1.-dot(mx,vec3(.33)))/max(dot(mx,vec3(.33)),.02),0.,1.));
     sk=mix(uSharp,uSharp*(.45+.8*amp),up);
   }
+  /* The camera's character (CAM_FX above). Less sharpening and a touch of softness: a real lens and
+     sensor never resolve every pixel. */
+  float k1=min(uCamFx,1.), k2=max(uCamFx-1.,0.);
+  sk*=1.-.45*k1-.3*k2;
+  c=mix(c,blur,.10*k1+.08*k2);
+  vec2 q=vUV-.5;
+  /* Colour fringes towards the edges: red and blue focus at slightly different sizes. */
+  if(uCamFx>0.){
+    vec2 ca=q*(.0011*k1+.0011*k2);
+    c.r=mix(c.r,texture(tI,vUV+ca).r,.9); c.b=mix(c.b,texture(tI,vUV-ca).b,.9);
+  }
   c=clamp(c+(c-blur)*sk,0.,1.);
-  vec2 q=vUV-.5; float v=1.-dot(q,q)*.34; c*=v;
+  /* Darker corners: a lens passes less light at an angle. */
+  float v=1.-dot(q,q)*(.34+.42*k1+.3*k2); c*=v;
+  /* Grain: strongest in the mid-tones, as in film and in a sensor's noise; a little coarser than a pixel. */
   float g=hash(gl_FragCoord.xy+fract(uTime)*311.)-.5;
-  c+=g*.010*(1.-.5*dot(c,vec3(.33)));
+  if(uCamFx>0.){ vec2 gp=floor(gl_FragCoord.xy/1.5); g=mix(g,(hash(gp+fract(uTime*1.7)*517.)+hash(gp*1.31+fract(uTime*2.3)*97.))-1.,.65); }
+  float lm=dot(c,vec3(.33));
+  c+=g*mix(.010*(1.-.5*lm),(.022*k1+.016*k2)*(.35+2.6*lm*(1.-lm)),min(uCamFx,1.));
   o=vec4(c,1.);
 }`;

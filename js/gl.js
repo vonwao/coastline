@@ -102,6 +102,8 @@ function finalizeProgram(P){
   P.u={}; const n=gl.getProgramParameter(P.p,gl.ACTIVE_UNIFORMS);
   for(let i=0;i<n;i++){ const a=gl.getActiveUniform(P.p,i); const nm=a.name.replace(/\[0\]$/,'');
     P.u[nm]={loc:gl.getUniformLocation(P.p,a.name),type:a.type,size:a.size}; }
+  /* The camera's character (CAM_FX, js/shaders/post.js) is fixed for the page: set it once here. */
+  if(P.u.uCamFx&&typeof CAM_FX!=='undefined'){ gl.useProgram(P.p); gl.uniform1f(P.u.uCamFx.loc,CAM_FX); }
 }
 function use(P,vals){
   gl.useProgram(P.p); let unit=0;
